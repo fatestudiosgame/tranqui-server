@@ -11,7 +11,6 @@ dotenv.config();
 // --- Cargar la clave de servicio ---
 let serviceAccount;
 
-// Si estamos en producción (Render), usamos variable de entorno
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -21,12 +20,10 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     process.exit(1);
   }
 } else {
-  // En desarrollo local, leemos el archivo firebase-key.json
   try {
     const keyPath = './firebase-key.json';
     if (!fs.existsSync(keyPath)) {
       console.error('❌ No se encuentra el archivo firebase-key.json');
-      console.error('   Descárgalo desde Firebase Console y colócalo aquí.');
       process.exit(1);
     }
     serviceAccount = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
@@ -49,12 +46,9 @@ try {
 }
 
 const db = admin.firestore();
-
-// --- Crear la app Express ---
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -62,10 +56,10 @@ app.use(express.json());
 
 /**
  * GET /api/negocios
- * Devuelve la lista de todos los negocios ordenados por timestamp (más reciente primero)
+ * Devuelve todos los negocios ordenados por timestamp
  */
 app.get('/api/negocios', async (req, res) => {
-  console.log('📡 Recibida petición GET /api/negocios');
+  console.log('📡 GET /api/negocios');
   try {
     const snapshot = await db.collection('negocios')
       .orderBy('timestamp', 'desc')
@@ -73,20 +67,16 @@ app.get('/api/negocios', async (req, res) => {
 
     const negocios = [];
     snapshot.forEach(doc => {
-      const data = doc.data();
       negocios.push({
         id: doc.id,
-        ...data
+        ...doc.data()
       });
     });
 
     console.log(`✅ Devolviendo ${negocios.length} negocios`);
-    res.json({
-      success: true,
-      data: negocios
-    });
+    res.json({ success: true, data: negocios });
   } catch (error) {
-    console.error('❌ Error al obtener negocios:', error);
+    console.error('❌ Error:', error);
     res.status(500).json({
       success: false,
       message: 'Error al obtener negocios',
@@ -97,49 +87,57 @@ app.get('/api/negocios', async (req, res) => {
 
 /**
  * POST /api/negocios
- * Agrega un nuevo negocio con los campos: nombre, descripcion, latitud, longitud, horario (opcional)
+ * Agrega un nuevo negocio con nombre, descripcion, latitud, longitud
  */
 app.post('/api/negocios', async (req, res) => {
-  console.log('📡 Recibida petición POST /api/negocios');
+  console.log('📡 POST /api/negocios');
   try {
-    const { nombre, descripcion, latitud, longitud, horario } = req.body;
-
-    console.log(`📝 Datos recibidos:`, { nombre, descripcion, latitud, longitud, horario });
+    const { nombre, descripcion, latitud, longitud } = req.body;
+    
+    // LOGS PARA DEPURACIÓN: VER QUÉ LLEGA
+    console.log('📝 Datos recibidos:');
+    console.log('   nombre:', nombre);
+    console.log('   descripcion:', descripcion);
+    console.log('   latitud:', latitud);
+    console.log('   longitud:', longitud);
 
     // Validar campos obligatorios
     if (!nombre || nombre.trim() === '') {
+      console.log('❌ ERROR: Nombre vacío o no enviado');
       return res.status(400).json({
         success: false,
         message: 'El nombre del negocio es obligatorio'
       });
     }
     if (latitud === undefined || longitud === undefined) {
+      console.log('❌ ERROR: Faltan coordenadas');
       return res.status(400).json({
         success: false,
         message: 'Faltan coordenadas (latitud, longitud)'
       });
     }
 
-    // Crear el objeto a guardar en Firestore
+    // Crear el objeto a guardar
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
       latitud: parseFloat(latitud),
       longitud: parseFloat(longitud),
-      horario: horario ? horario.trim() : '',
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
 
+    console.log('💾 Guardando en Firestore:', negocioData);
+
     const docRef = await db.collection('negocios').add(negocioData);
 
-    console.log(`✅ Negocio agregado con ID: ${docRef.id}`);
+    console.log(`✅ Negocio guardado con ID: ${docRef.id}`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
       id: docRef.id
     });
   } catch (error) {
-    console.error('❌ Error al agregar negocio:', error);
+    console.error('❌ Error al agregar:', error);
     res.status(500).json({
       success: false,
       message: 'Error al agregar negocio',
@@ -150,7 +148,6 @@ app.post('/api/negocios', async (req, res) => {
 
 /**
  * GET /api/negocios/:id
- * Obtiene un negocio específico por su ID
  */
 app.get('/api/negocios/:id', async (req, res) => {
   try {
@@ -180,7 +177,6 @@ app.get('/api/negocios/:id', async (req, res) => {
 
 /**
  * GET /api/health
- * Health check para saber si el servidor está vivo
  */
 app.get('/api/health', (req, res) => {
   res.json({
@@ -193,9 +189,9 @@ app.get('/api/health', (req, res) => {
 // ========== INICIAR SERVIDOR ==========
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
-  console.log(`📡 Endpoints disponibles:`);
-  console.log(`   GET  /api/negocios       - Obtener todos los negocios`);
-  console.log(`   POST /api/negocios       - Agregar un nuevo negocio`);
-  console.log(`   GET  /api/negocios/:id   - Obtener un negocio específico`);
-  console.log(`   GET  /api/health         - Verificar estado del servidor`);
+  console.log(`📡 Endpoints:`);
+  console.log(`   GET  /api/negocios`);
+  console.log(`   POST /api/negocios`);
+  console.log(`   GET  /api/negocios/:id`);
+  console.log(`   GET  /api/health`);
 });
