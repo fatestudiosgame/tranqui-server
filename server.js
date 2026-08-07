@@ -94,14 +94,12 @@ app.post('/api/negocios', async (req, res) => {
   try {
     const { nombre, descripcion, latitud, longitud } = req.body;
     
-    // LOGS PARA DEPURACIÓN: VER QUÉ LLEGA
     console.log('📝 Datos recibidos:');
     console.log('   nombre:', nombre);
     console.log('   descripcion:', descripcion);
     console.log('   latitud:', latitud);
     console.log('   longitud:', longitud);
 
-    // Validar campos obligatorios
     if (!nombre || nombre.trim() === '') {
       console.log('❌ ERROR: Nombre vacío o no enviado');
       return res.status(400).json({
@@ -117,7 +115,6 @@ app.post('/api/negocios', async (req, res) => {
       });
     }
 
-    // Crear el objeto a guardar
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
@@ -175,6 +172,89 @@ app.get('/api/negocios/:id', async (req, res) => {
   }
 });
 
+// ========== RUTAS PARA REPORTES DE LUZ ==========
+
+/**
+ * GET /api/reportes-luz
+ * Devuelve los reportes de luz de las últimas 2 horas
+ */
+app.get('/api/reportes-luz', async (req, res) => {
+  console.log('📡 GET /api/reportes-luz');
+  try {
+    const ahora = new Date();
+    const limite = new Date(ahora.getTime() - 2 * 60 * 60 * 1000);
+
+    const snapshot = await db.collection('reportes_luz')
+      .where('timestamp', '>=', limite)
+      .orderBy('timestamp', 'desc')
+      .get();
+
+    const reportes = [];
+    snapshot.forEach(doc => {
+      reportes.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+
+    console.log(`✅ Devolviendo ${reportes.length} reportes de luz`);
+    res.json({ success: true, data: reportes });
+  } catch (error) {
+    console.error('❌ Error al obtener reportes de luz:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener reportes de luz',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/reportes-luz
+ * Guarda un nuevo reporte de luz (estado: true/false)
+ */
+app.post('/api/reportes-luz', async (req, res) => {
+  console.log('📡 POST /api/reportes-luz');
+  try {
+    const { latitud, longitud, estado } = req.body;
+
+    console.log('📝 Datos recibidos:');
+    console.log('   latitud:', latitud);
+    console.log('   longitud:', longitud);
+    console.log('   estado:', estado);
+
+    if (latitud === undefined || longitud === undefined || estado === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan campos: latitud, longitud, estado'
+      });
+    }
+
+    const reporteData = {
+      latitud: parseFloat(latitud),
+      longitud: parseFloat(longitud),
+      estado: estado === true || estado === 'true' ? true : false,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const docRef = await db.collection('reportes_luz').add(reporteData);
+
+    console.log(`✅ Reporte de luz guardado con ID: ${docRef.id} (estado: ${reporteData.estado})`);
+    res.status(201).json({
+      success: true,
+      message: 'Reporte guardado correctamente',
+      id: docRef.id
+    });
+  } catch (error) {
+    console.error('❌ Error al guardar reporte de luz:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al guardar reporte de luz',
+      error: error.message
+    });
+  }
+});
+
 /**
  * GET /api/health
  */
@@ -189,9 +269,11 @@ app.get('/api/health', (req, res) => {
 // ========== INICIAR SERVIDOR ==========
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
-  console.log(`📡 Endpoints:`);
+  console.log(`📡 Endpoints disponibles:`);
   console.log(`   GET  /api/negocios`);
   console.log(`   POST /api/negocios`);
   console.log(`   GET  /api/negocios/:id`);
+  console.log(`   GET  /api/reportes-luz`);
+  console.log(`   POST /api/reportes-luz`);
   console.log(`   GET  /api/health`);
 });
