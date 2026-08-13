@@ -73,8 +73,8 @@ app.get('/api/negocios', async (req, res) => {
 app.post('/api/negocios', async (req, res) => {
   console.log('📡 POST /api/negocios');
   try {
-    const { nombre, descripcion, latitud, longitud } = req.body;
-    console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud });
+    const { nombre, descripcion, latitud, longitud, municipio } = req.body;
+    console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud, municipio });
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
     }
@@ -86,6 +86,7 @@ app.post('/api/negocios', async (req, res) => {
       descripcion: descripcion ? descripcion.trim() : '',
       latitud: parseFloat(latitud),
       longitud: parseFloat(longitud),
+      municipio: municipio ? municipio.trim() : '',
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
     const docRef = await db.collection('negocios').add(negocioData);
@@ -117,6 +118,93 @@ app.get('/api/negocios/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener negocio',
+      error: error.message
+    });
+  }
+});
+
+// ========== RUTAS PARA COMENTARIOS ==========
+
+// Obtener comentarios de un negocio
+app.get('/api/comentarios/:negocioId', async (req, res) => {
+  console.log(`📡 GET /api/comentarios/${req.params.negocioId}`);
+  try {
+    const snapshot = await db
+      .collection('negocios')
+      .doc(req.params.negocioId)
+      .collection('comentarios')
+      .orderBy('timestamp', 'desc')
+      .get();
+
+    const comentarios = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      comentarios.push({
+        id: doc.id,
+        texto: data.texto || '',
+        autor: data.autor || 'Anónimo',
+        timestamp: data.timestamp || null,
+        puntuacion: data.puntuacion || null,
+      });
+    });
+
+    console.log(`✅ Devolviendo ${comentarios.length} comentarios`);
+    res.json({ success: true, data: comentarios });
+  } catch (error) {
+    console.error('❌ Error al obtener comentarios:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener comentarios',
+      error: error.message
+    });
+  }
+});
+
+// Agregar un comentario
+app.post('/api/comentarios/:negocioId', async (req, res) => {
+  console.log(`📡 POST /api/comentarios/${req.params.negocioId}`);
+  try {
+    const { texto, autor, puntuacion } = req.body;
+
+    if (!texto || texto.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'El texto del comentario es obligatorio'
+      });
+    }
+
+    const comentarioData = {
+      texto: texto.trim(),
+      autor: autor?.trim() || 'Anónimo',
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      puntuacion: puntuacion || null,
+    };
+
+    const docRef = await db
+      .collection('negocios')
+      .doc(req.params.negocioId)
+      .collection('comentarios')
+      .add(comentarioData);
+
+    // ⭐ Actualizar contador de comentarios en el negocio (opcional)
+    await db
+      .collection('negocios')
+      .doc(req.params.negocioId)
+      .update({
+        totalComentarios: admin.firestore.FieldValue.increment(1)
+      });
+
+    console.log(`✅ Comentario agregado con ID: ${docRef.id}`);
+    res.status(201).json({
+      success: true,
+      message: 'Comentario agregado correctamente',
+      id: docRef.id
+    });
+  } catch (error) {
+    console.error('❌ Error al agregar comentario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al agregar comentario',
       error: error.message
     });
   }
@@ -198,6 +286,8 @@ app.listen(port, () => {
   console.log(`   GET  /api/negocios`);
   console.log(`   POST /api/negocios`);
   console.log(`   GET  /api/negocios/:id`);
+  console.log(`   GET  /api/comentarios/:negocioId`);
+  console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
   console.log(`   POST /api/reportes-luz`);
   console.log(`   GET  /api/health`);
