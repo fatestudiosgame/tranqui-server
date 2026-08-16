@@ -77,24 +77,35 @@ app.get('/api/negocios', async (req, res) => {
 app.post('/api/negocios', async (req, res) => {
   console.log('📡 POST /api/negocios');
   try {
-    const { nombre, descripcion, latitud, longitud, municipio } = req.body;
-    console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud, municipio });
+    // ⭐ AHORA INCLUYE provincia
+    const { nombre, descripcion, latitud, longitud, provincia, municipio } = req.body;
+    console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud, provincia, municipio });
+    
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
     }
     if (latitud === undefined || longitud === undefined) {
       return res.status(400).json({ success: false, message: 'Faltan coordenadas' });
     }
+    if (!provincia || provincia.trim() === '') {
+      return res.status(400).json({ success: false, message: 'La provincia es obligatoria' });
+    }
+    if (!municipio || municipio.trim() === '') {
+      return res.status(400).json({ success: false, message: 'El municipio es obligatorio' });
+    }
+    
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
       latitud: parseFloat(latitud),
       longitud: parseFloat(longitud),
-      municipio: municipio ? municipio.trim() : '',
+      provincia: provincia.trim(), // ⭐ NUEVO CAMPO
+      municipio: municipio.trim(),
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
+    
     const docRef = await db.collection('negocios').add(negocioData);
-    console.log(`✅ Negocio agregado con ID: ${docRef.id}`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio})`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -300,7 +311,7 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios`);
-  console.log(`   POST /api/negocios`);
+  console.log(`   POST /api/negocios (ahora con provincia)`);
   console.log(`   GET  /api/negocios/:id`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
