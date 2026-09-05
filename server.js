@@ -44,7 +44,7 @@ try {
 
 const db = admin.firestore();
 
-// --- INICIALIZAR EXPRESS (DESPUÉS DE LA CONFIGURACIÓN) ---
+// --- INICIALIZAR EXPRESS ---
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -59,10 +59,34 @@ app.get('/api/negocios', async (req, res) => {
   try {
     const snapshot = await db.collection('negocios').orderBy('timestamp', 'desc').get();
     const negocios = [];
+    
+    const ahora = new Date();
+    let contadorVip = 0;
+    
     snapshot.forEach(doc => {
-      negocios.push({ id: doc.id, ...doc.data() });
+      const data = doc.data();
+      
+      let esVipVigente = false;
+      if (data.esVip && data.vipHasta) {
+        const vipHasta = data.vipHasta.toDate();
+        esVipVigente = vipHasta > ahora;
+        if (esVipVigente) contadorVip++;
+      }
+      
+      negocios.push({ 
+        id: doc.id, 
+        ...data,
+        esVip: esVipVigente
+      });
     });
-    console.log(`✅ Devolviendo ${negocios.length} negocios`);
+    
+    negocios.sort((a, b) => {
+      if (a.esVip && !b.esVip) return -1;
+      if (!a.esVip && b.esVip) return 1;
+      return 0;
+    });
+    
+    console.log(`✅ Devolviendo ${negocios.length} negocios (${contadorVip} VIP vigentes)`);
     res.json({ success: true, data: negocios });
   } catch (error) {
     console.error('❌ Error:', error);
@@ -77,7 +101,6 @@ app.get('/api/negocios', async (req, res) => {
 app.post('/api/negocios', async (req, res) => {
   console.log('📡 POST /api/negocios');
   try {
-    // ⭐ AHORA INCLUYE provincia
     const { nombre, descripcion, latitud, longitud, provincia, municipio } = req.body;
     console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud, provincia, municipio });
     
@@ -99,8 +122,9 @@ app.post('/api/negocios', async (req, res) => {
       descripcion: descripcion ? descripcion.trim() : '',
       latitud: parseFloat(latitud),
       longitud: parseFloat(longitud),
-      provincia: provincia.trim(), // ⭐ NUEVO CAMPO
+      provincia: provincia.trim(),
       municipio: municipio.trim(),
+      esVip: false,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
     
@@ -127,12 +151,255 @@ app.get('/api/negocios/:id', async (req, res) => {
     if (!doc.exists) {
       return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
-    res.json({ success: true, data: { id: doc.id, ...doc.data() } });
+    
+    const data = doc.data();
+    const ahora = new Date();
+    let esVipVigente = false;
+    if (data.esVip && data.vipHasta) {
+      const vipHasta = data.vipHasta.toDate();
+      esVipVigente = vipHasta > ahora;
+    }
+    
+    res.json({ 
+      success: true, 
+      data: { 
+        id: doc.id, 
+        ...data,
+        esVip: esVipVigente
+      } 
+    });
   } catch (error) {
     console.error('Error al obtener negocio:', error);
     res.status(500).json({
       success: false,
       message: 'Error al obtener negocio',
+      error: error.message
+    });
+  }
+});
+
+// ========== RUTAS PARA GESTIÓN VIP ⭐ NUEVO ==========
+
+// ⭐ RECLAMAR NEGOCIO COMO VIP
+app.put('/api/negocios/:id/reclamar', async (req, res) => {
+  console.log(`📡 PUT /api/negocios/${req.params.id}/reclamar`);
+  try {
+    const { username, tipoVip, vipHasta } = req.body;
+    
+    if (!username || !tipoVip || !vipHasta) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Faltan campos: username, tipoVip, vipHasta' 
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+
+    // ⭐ Verificar si ya está reclamado por otro usuario
+    if (negocioData.esVip && negocioData.propietarioUsername && negocioData.propietarioUsername !== username) {
+      const vipHastaActual = negocioData.vipHasta?.toDate();
+      const ahora = new Date();
+      
+      if (vipHastaActual && vipHastaActual > ahora) {
+        return res.status(409).json({ 
+          success: false, 
+          message: `Este negocio ya fue reclamado por @${negocioData.propietarioUsername}` 
+        });
+      }
+    }
+
+    // ⭐ Contar cuántos negocios VIP vigentes tiene este usuario
+    const snapshot = await db.collection('negocios')
+      .where('propietarioUsername', '==', username)
+      .where('esVip', '==', true)
+      .get();
+
+    const ahora = new Date();
+    let negociosVigentes = 0;
+    const idsVigentes = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.vipHasta) {
+        const vipHasta = data.vipHasta.toDate();
+        if (vipHasta > ahora) {
+          negociosVigentes++;
+          idsVigentes.push(doc.id);
+        }
+      }
+    });
+
+    // ⭐ Verificar límite según el plan
+    const limites = { 'prueba': 1, 'bronce': 1, 'plata': 5, 'oro': 10 };
+    const limite = limites[tipoVip.toLowerCase()] || 1;
+
+    // Si el negocio que está reclamando YA es suyo (re-renovar), no cuenta contra el límite
+    const esMismoNegocio = idsVigentes.includes(req.params.id);
+    
+    if (!esMismoNegocio && negociosVigentes >= limite) {
+      return res.status(403).json({ 
+        success: false, 
+        message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Libera uno primero.` 
+      });
+    }
+
+    // ⭐ Actualizar el negocio
+    await negocioRef.update({
+      esVip: true,
+      tipoVip: tipoVip.toLowerCase(),
+      propietarioUsername: username,
+      vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
+      timestampVip: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`✅ Negocio ${req.params.id} reclamado por @${username} (Plan: ${tipoVip})`);
+    res.json({
+      success: true,
+      message: 'Negocio reclamado correctamente',
+      negociosVigentes: esMismoNegocio ? negociosVigentes : negociosVigentes + 1,
+      limite: limite
+    });
+  } catch (error) {
+    console.error('❌ Error al reclamar negocio:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al reclamar negocio',
+      error: error.message
+    });
+  }
+});
+
+// ⭐ LIBERAR NEGOCIO VIP
+app.put('/api/negocios/:id/liberar', async (req, res) => {
+  console.log(`📡 PUT /api/negocios/${req.params.id}/liberar`);
+  try {
+    const { username } = req.body;
+
+    if (!username) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Falta campo: username' 
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+
+    // ⭐ Verificar que el usuario sea el propietario
+    if (negocioData.propietarioUsername !== username) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'No tienes permiso para liberar este negocio' 
+      });
+    }
+
+    // ⭐ Liberar el negocio
+    await negocioRef.update({
+      esVip: false,
+      tipoVip: null,
+      propietarioUsername: null,
+      vipHasta: null,
+      descripcionVip: null,
+      timestampLiberacion: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`✅ Negocio ${req.params.id} liberado por @${username}`);
+    res.json({
+      success: true,
+      message: 'Negocio liberado correctamente'
+    });
+  } catch (error) {
+    console.error('❌ Error al liberar negocio:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al liberar negocio',
+      error: error.message
+    });
+  }
+});
+
+// ⭐ ACTUALIZAR DATOS DE NEGOCIO VIP
+app.put('/api/negocios/:id/vip', async (req, res) => {
+  console.log(`📡 PUT /api/negocios/${req.params.id}/vip`);
+  try {
+    const { username, descripcionVip, telefono, whatsapp, horario, nombre, descripcion } = req.body;
+
+    if (!username) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Falta campo: username' 
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+
+    // ⭐ Verificar que el usuario sea el propietario
+    if (negocioData.propietarioUsername !== username) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'No tienes permiso para editar este negocio' 
+      });
+    }
+
+    // ⭐ Verificar que el VIP esté vigente
+    if (!negocioData.esVip || !negocioData.vipHasta) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Este negocio no es VIP' 
+      });
+    }
+
+    const vipHasta = negocioData.vipHasta.toDate();
+    if (vipHasta <= new Date()) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'La licencia VIP ha expirado' 
+      });
+    }
+
+    // ⭐ Actualizar campos
+    const updateData = {
+      timestampActualizacion: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    if (descripcionVip !== undefined) updateData.descripcionVip = descripcionVip;
+    if (telefono !== undefined) updateData.telefono = telefono;
+    if (whatsapp !== undefined) updateData.whatsapp = whatsapp;
+    if (horario !== undefined) updateData.horario = horario;
+    if (nombre !== undefined) updateData.nombre = nombre;
+    if (descripcion !== undefined) updateData.descripcion = descripcion;
+
+    await negocioRef.update(updateData);
+
+    console.log(`✅ Negocio ${req.params.id} actualizado por @${username}`);
+    res.json({
+      success: true,
+      message: 'Negocio actualizado correctamente'
+    });
+  } catch (error) {
+    console.error('❌ Error al actualizar negocio:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar negocio',
       error: error.message
     });
   }
@@ -310,9 +577,12 @@ app.get('/api/health', (req, res) => {
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
-  console.log(`   GET  /api/negocios`);
-  console.log(`   POST /api/negocios (ahora con provincia)`);
+  console.log(`   GET  /api/negocios (con soporte VIP)`);
+  console.log(`   POST /api/negocios (con provincia)`);
   console.log(`   GET  /api/negocios/:id`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP`);
+  console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
