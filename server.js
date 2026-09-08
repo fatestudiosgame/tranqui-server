@@ -74,9 +74,7 @@ const CATEGORIAS_VALIDAS = [
 // Estos usuarios pueden editar/borrar CUALQUIER negocio
 // =========================================================
 const ADMIN_USERNAMES = [
-  'noblesse',    // ← CAMBIA ESTO
-  // Puedes agregar más admins aquí:
-  // 'otro_admin',
+  'noblesse',
 ];
 
 function esAdmin(username) {
@@ -196,7 +194,6 @@ app.post('/api/negocios', async (req, res) => {
       return res.status(400).json({ success: false, message: 'El municipio es obligatorio' });
     }
     
-    // ⭐ Validar categorías
     const validacion = validarCategorias(categoriaPrincipal, categoriasSecundarias);
     if (!validacion.valido) {
       return res.status(400).json({ success: false, message: validacion.error });
@@ -487,6 +484,8 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
       propietarioUsername: null,
       vipHasta: null,
       descripcionVip: null,
+      esNegocioPrueba: false,
+      creadoPorAdmin: null,
       timestampLiberacion: admin.firestore.FieldValue.serverTimestamp()
     });
 
@@ -595,7 +594,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
   }
 });
 
-// ========== RUTAS DE ADMIN ⭐ NUEVO ==========
+// ========== RUTAS DE ADMIN ⭐ ==========
 
 // ⭐ ADMIN: Editar cualquier negocio (sin ser propietario)
 app.put('/api/admin/negocios/:id', async (req, res) => {
@@ -708,7 +707,6 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
 
-    // Borrar comentarios de la subcolección primero
     const comentariosRef = negocioRef.collection('comentarios');
     const comentariosSnap = await comentariosRef.get();
     const batch = db.batch();
@@ -744,11 +742,14 @@ app.get('/api/admin/stats', async (req, res) => {
 
     const ahora = new Date();
     let vipVigentes = 0;
+    let pruebas = 0;
     const porCategoria = {};
     const porPlan = {};
 
     negociosSnap.forEach(doc => {
       const data = doc.data();
+
+      if (data.esNegocioPrueba === true) pruebas++;
 
       if (data.esVip && data.vipHasta) {
         const vipHasta = data.vipHasta.toDate();
@@ -768,6 +769,7 @@ app.get('/api/admin/stats', async (req, res) => {
       data: {
         totalNegocios,
         vipVigentes,
+        pruebas,
         porCategoria,
         porPlan,
         timestamp: new Date().toISOString(),
@@ -775,6 +777,132 @@ app.get('/api/admin/stats', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error en stats:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ⭐ ADMIN: Cambiar estado VIP de cualquier negocio (con soporte para pruebas)
+app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
+  console.log(`📡 PUT /api/admin/negocios/${req.params.id}/vip-status`);
+  try {
+    const {
+      adminUsername,
+      accion,  // 'reclamar' | 'liberar' | 'extender'
+      tipoVip,
+      propietarioUsername,
+      vipHasta,
+      esNegocioPrueba,
+    } = req.body;
+
+    if (!adminUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Falta campo: adminUsername',
+      });
+    }
+
+    if (!esAdmin(adminUsername)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos de administrador',
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    let updateData = {
+      timestampAdminVipUpdate: admin.firestore.FieldValue.serverTimestamp(),
+      adminQueModificoVip: adminUsername,
+    };
+
+    if (accion === 'reclamar') {
+      if (!tipoVip || !vipHasta) {
+        return res.status(400).json({
+          success: false,
+          message: 'Para reclamar se requiere: tipoVip, vipHasta',
+        });
+      }
+      
+      let propietarioFinal = propietarioUsername || adminUsername;
+      let esPrueba = false;
+      
+      if (esNegocioPrueba === true) {
+        propietarioFinal = `${adminUsername}_usuario_test`;
+        esPrueba = true;
+      }
+      
+      updateData = {
+        ...updateData,
+        esVip: true,
+        tipoVip: tipoVip.toLowerCase(),
+        propietarioUsername: propietarioFinal,
+        vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
+        esNegocioPrueba: esPrueba,
+        creadoPorAdmin: esPrueba ? adminUsername : null,
+      };
+    } else if (accion === 'liberar') {
+      updateData = {
+        ...updateData,
+        esVip: false,
+        tipoVip: null,
+        propietarioUsername: null,
+        vipHasta: null,
+        descripcionVip: null,
+        esNegocioPrueba: false,
+        creadoPorAdmin: null,
+      };
+    } else if (accion === 'extender') {
+      if (!vipHasta) {
+        return res.status(400).json({
+          success: false,
+          message: 'Para extender se requiere: vipHasta',
+        });
+      }
+      updateData = {
+        ...updateData,
+        vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
+      };
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Acción inválida. Usa: reclamar, liberar, o extender',
+      });
+    }
+
+    await negocioRef.update(updateData);
+
+    console.log(`✅ [ADMIN] VIP status cambiado por @${adminUsername} (${accion})`);
+    res.json({
+      success: true,
+      message: `Estado VIP actualizado (${accion})`,
+    });
+  } catch (error) {
+    console.error('❌ Error admin al cambiar VIP status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al cambiar estado VIP',
+      error: error.message,
+    });
+  }
+});
+
+// ⭐ ADMIN: Verificar si un username es admin
+app.get('/api/admin/verificar', async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Falta username' });
+    }
+    res.json({
+      success: true,
+      esAdmin: esAdmin(username),
+    });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -958,8 +1086,10 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
   console.log(`   GET  /api/categorias ⭐`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
+  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
   console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN`);
   console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
+  console.log(`   GET  /api/admin/verificar       ⭐ ADMIN`);
   console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
