@@ -44,6 +44,76 @@ try {
 
 const db = admin.firestore();
 
+// =========================================================
+// ⭐ CATEGORÍAS VÁLIDAS (fuente de verdad del backend)
+// Debe coincidir con lib/data/categorias.dart en Flutter
+// =========================================================
+const CATEGORIAS_VALIDAS = [
+  // Comida
+  'restaurante', 'cafeteria', 'bar', 'comida_rapida', 'reposteria', 'elaborador_alimentos',
+  // Compras
+  'mercado', 'supermercado', 'ropa_calzado', 'ferreteria', 'farmacia', 'electronica', 'papeleria',
+  // Belleza
+  'peluqueria', 'salon_belleza', 'tatuajes',
+  // Talleres
+  'taller_electronica', 'reparacion_celulares', 'taller_mecanico', 'costura',
+  // Ocio
+  'sala_juegos', 'cibercafe', 'eventos',
+  // Salud
+  'consulta_medica', 'veterinaria',
+  // Transporte
+  'taxi', 'transporte_provincial', 'alquiler_vehiculos',
+  // Servicios
+  'fotografia', 'gestoria', 'tutorias', 'recargas',
+  // Válvula de escape
+  'otros',
+];
+
+// =========================================================
+// ⭐ USUARIOS ADMIN
+// Estos usuarios pueden editar/borrar CUALQUIER negocio
+// =========================================================
+const ADMIN_USERNAMES = [
+  'noblesse',    // ← CAMBIA ESTO
+  // Puedes agregar más admins aquí:
+  // 'otro_admin',
+];
+
+function esAdmin(username) {
+  return ADMIN_USERNAMES.includes(username);
+}
+
+// =========================================================
+// ⭐ HELPER: Validar categorías de un negocio
+// =========================================================
+function validarCategorias(categoriaPrincipal, categoriasSecundarias) {
+  if (!categoriaPrincipal || typeof categoriaPrincipal !== 'string') {
+    return { valido: false, error: 'La categoría principal es obligatoria' };
+  }
+  if (!CATEGORIAS_VALIDAS.includes(categoriaPrincipal)) {
+    return { valido: false, error: `Categoría principal inválida: ${categoriaPrincipal}` };
+  }
+  const secundarias = categoriasSecundarias || [];
+  if (!Array.isArray(secundarias)) {
+    return { valido: false, error: 'categoriasSecundarias debe ser un array' };
+  }
+  if (secundarias.length > 2) {
+    return { valido: false, error: 'Máximo 2 categorías secundarias' };
+  }
+  if (new Set(secundarias).size !== secundarias.length) {
+    return { valido: false, error: 'Categorías secundarias repetidas' };
+  }
+  if (secundarias.includes(categoriaPrincipal)) {
+    return { valido: false, error: 'La principal no puede repetirse en secundarias' };
+  }
+  for (const sec of secundarias) {
+    if (!CATEGORIAS_VALIDAS.includes(sec)) {
+      return { valido: false, error: `Categoría secundaria inválida: ${sec}` };
+    }
+  }
+  return { valido: true };
+}
+
 // --- INICIALIZAR EXPRESS ---
 const app = express();
 const port = process.env.PORT || 3000;
@@ -101,8 +171,17 @@ app.get('/api/negocios', async (req, res) => {
 app.post('/api/negocios', async (req, res) => {
   console.log('📡 POST /api/negocios');
   try {
-    const { nombre, descripcion, latitud, longitud, provincia, municipio } = req.body;
-    console.log('📝 Datos recibidos:', { nombre, descripcion, latitud, longitud, provincia, municipio });
+    const {
+      nombre,
+      descripcion,
+      latitud,
+      longitud,
+      provincia,
+      municipio,
+      categoriaPrincipal,
+      categoriasSecundarias,
+    } = req.body;
+    console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal });
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
@@ -117,6 +196,12 @@ app.post('/api/negocios', async (req, res) => {
       return res.status(400).json({ success: false, message: 'El municipio es obligatorio' });
     }
     
+    // ⭐ Validar categorías
+    const validacion = validarCategorias(categoriaPrincipal, categoriasSecundarias);
+    if (!validacion.valido) {
+      return res.status(400).json({ success: false, message: validacion.error });
+    }
+    
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
@@ -124,12 +209,14 @@ app.post('/api/negocios', async (req, res) => {
       longitud: parseFloat(longitud),
       provincia: provincia.trim(),
       municipio: municipio.trim(),
+      categoriaPrincipal: categoriaPrincipal,
+      categoriasSecundarias: categoriasSecundarias || [],
       esVip: false,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
     
     const docRef = await db.collection('negocios').add(negocioData);
-    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio})`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio}) [Categoría: ${categoriaPrincipal}]`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -178,9 +265,101 @@ app.get('/api/negocios/:id', async (req, res) => {
   }
 });
 
-// ========== RUTAS PARA GESTIÓN VIP ⭐ NUEVO ==========
+// ========== RUTAS PARA CATEGORÍAS ==========
 
-// ⭐ RECLAMAR NEGOCIO COMO VIP
+app.get('/api/categorias', async (req, res) => {
+  console.log('📡 GET /api/categorias');
+  try {
+    const snapshot = await db
+      .collection('categorias')
+      .where('activo', '==', true)
+      .orderBy('orden', 'asc')
+      .get();
+
+    const categorias = [];
+    snapshot.forEach(doc => {
+      categorias.push({ id: doc.id, ...doc.data() });
+    });
+
+    console.log(`✅ Devolviendo ${categorias.length} categorías`);
+    res.json({ success: true, data: categorias });
+  } catch (error) {
+    console.error('❌ Error al obtener categorías:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener categorías',
+      error: error.message
+    });
+  }
+});
+
+// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore
+// ⚠️ ELIMINAR ESTE ENDPOINT DESPUÉS DE USARLO UNA VEZ
+app.post('/api/admin/poblar-categorias', async (req, res) => {
+  const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'TRANQUI_ADMIN_2026';
+  if (req.headers['x-admin-token'] !== ADMIN_TOKEN) {
+    return res.status(403).json({ success: false, message: 'Sin autorización' });
+  }
+
+  try {
+    const categoriasDefinicion = [
+      { id: 'restaurante', nombre: 'Restaurante / Paladar', grupo: 'comida', orden: 1 },
+      { id: 'cafeteria', nombre: 'Cafetería / Cafetín', grupo: 'comida', orden: 2 },
+      { id: 'bar', nombre: 'Bar / Centro nocturno', grupo: 'comida', orden: 3 },
+      { id: 'comida_rapida', nombre: 'Pizzería / Comida rápida', grupo: 'comida', orden: 4 },
+      { id: 'reposteria', nombre: 'Repostería / Dulcería', grupo: 'comida', orden: 5 },
+      { id: 'elaborador_alimentos', nombre: 'Elaborador de alimentos (MIPYME)', grupo: 'comida', orden: 6 },
+      { id: 'mercado', nombre: 'Mercado / Bodega / Tienda', grupo: 'compras', orden: 1 },
+      { id: 'supermercado', nombre: 'Supermercado / Minisuper', grupo: 'compras', orden: 2 },
+      { id: 'ropa_calzado', nombre: 'Tienda de ropa y calzado', grupo: 'compras', orden: 3 },
+      { id: 'ferreteria', nombre: 'Ferretería / Materiales de construcción', grupo: 'compras', orden: 4 },
+      { id: 'farmacia', nombre: 'Farmacia / Óptica', grupo: 'compras', orden: 5 },
+      { id: 'electronica', nombre: 'Tienda de celulares / Electrónica', grupo: 'compras', orden: 6 },
+      { id: 'papeleria', nombre: 'Librería / Papelería / Imprenta', grupo: 'compras', orden: 7 },
+      { id: 'peluqueria', nombre: 'Peluquería / Barbería', grupo: 'belleza', orden: 1 },
+      { id: 'salon_belleza', nombre: 'Salón de belleza / Uñas / Spa', grupo: 'belleza', orden: 2 },
+      { id: 'tatuajes', nombre: 'Tatuajes / Piercings', grupo: 'belleza', orden: 3 },
+      { id: 'taller_electronica', nombre: 'Taller de electrónica', grupo: 'talleres', orden: 1 },
+      { id: 'reparacion_celulares', nombre: 'Reparación de celulares', grupo: 'talleres', orden: 2 },
+      { id: 'taller_mecanico', nombre: 'Taller mecánico / Gomería', grupo: 'talleres', orden: 3 },
+      { id: 'costura', nombre: 'Costura / Zapatería / Cerrajería', grupo: 'talleres', orden: 4 },
+      { id: 'sala_juegos', nombre: 'Sala de juegos / Videojuegos / Billar', grupo: 'ocio', orden: 1 },
+      { id: 'cibercafe', nombre: 'Cibercafé / Navegación / Punto WiFi', grupo: 'ocio', orden: 2 },
+      { id: 'eventos', nombre: 'Eventos / Fiestas / Alquiler de salón', grupo: 'ocio', orden: 3 },
+      { id: 'consulta_medica', nombre: 'Consultorio / Clínica privada', grupo: 'salud', orden: 1 },
+      { id: 'veterinaria', nombre: 'Veterinaria / Pet shop', grupo: 'salud', orden: 2 },
+      { id: 'taxi', nombre: 'Taxi / Transportista local', grupo: 'transporte', orden: 1 },
+      { id: 'transporte_provincial', nombre: 'Transporte interprovincial / Encomiendas', grupo: 'transporte', orden: 2 },
+      { id: 'alquiler_vehiculos', nombre: 'Alquiler de vehículos / Bicicletas', grupo: 'transporte', orden: 3 },
+      { id: 'fotografia', nombre: 'Fotografía / Diseño', grupo: 'servicios', orden: 1 },
+      { id: 'gestoria', nombre: 'Gestor / Contador / Asesor', grupo: 'servicios', orden: 2 },
+      { id: 'tutorias', nombre: 'Tutorías / Academia / Clases', grupo: 'servicios', orden: 3 },
+      { id: 'recargas', nombre: 'Punto de recarga / Transfermóvil / CADECA', grupo: 'servicios', orden: 4 },
+      { id: 'otros', nombre: 'Otros servicios', grupo: 'otros', orden: 99 },
+    ];
+
+    const batch = db.batch();
+    categoriasDefinicion.forEach(cat => {
+      const ref = db.collection('categorias').doc(cat.id);
+      batch.set(ref, { ...cat, activo: true });
+    });
+
+    await batch.commit();
+
+    console.log(`✅ ${categoriasDefinicion.length} categorías pobladas en Firestore`);
+    res.json({
+      success: true,
+      message: `${categoriasDefinicion.length} categorías pobladas correctamente`,
+      categorias: categoriasDefinicion.map(c => c.id)
+    });
+  } catch (error) {
+    console.error('❌ Error al poblar categorías:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ========== RUTAS PARA GESTIÓN VIP ==========
+
 app.put('/api/negocios/:id/reclamar', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/reclamar`);
   try {
@@ -202,7 +381,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    // ⭐ Verificar si ya está reclamado por otro usuario
     if (negocioData.esVip && negocioData.propietarioUsername && negocioData.propietarioUsername !== username) {
       const vipHastaActual = negocioData.vipHasta?.toDate();
       const ahora = new Date();
@@ -215,7 +393,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
       }
     }
 
-    // ⭐ Contar cuántos negocios VIP vigentes tiene este usuario
     const snapshot = await db.collection('negocios')
       .where('propietarioUsername', '==', username)
       .where('esVip', '==', true)
@@ -235,11 +412,13 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
       }
     });
 
-    // ⭐ Verificar límite según el plan
-    const limites = { 'prueba': 1, 'bronce': 1, 'plata': 5, 'oro': 10 };
-    const limite = limites[tipoVip.toLowerCase()] || 1;
+    const t = tipoVip.toLowerCase();
+    let limite = 1;
+    if (t.includes('oro')) limite = 10;
+    else if (t.includes('plata')) limite = 5;
+    else if (t.includes('bronce')) limite = 1;
+    else if (t.includes('prueba')) limite = 1;
 
-    // Si el negocio que está reclamando YA es suyo (re-renovar), no cuenta contra el límite
     const esMismoNegocio = idsVigentes.includes(req.params.id);
     
     if (!esMismoNegocio && negociosVigentes >= limite) {
@@ -249,7 +428,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
       });
     }
 
-    // ⭐ Actualizar el negocio
     await negocioRef.update({
       esVip: true,
       tipoVip: tipoVip.toLowerCase(),
@@ -275,7 +453,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
   }
 });
 
-// ⭐ LIBERAR NEGOCIO VIP
 app.put('/api/negocios/:id/liberar', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/liberar`);
   try {
@@ -297,7 +474,6 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    // ⭐ Verificar que el usuario sea el propietario
     if (negocioData.propietarioUsername !== username) {
       return res.status(403).json({ 
         success: false, 
@@ -305,7 +481,6 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
       });
     }
 
-    // ⭐ Liberar el negocio
     await negocioRef.update({
       esVip: false,
       tipoVip: null,
@@ -330,11 +505,20 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
   }
 });
 
-// ⭐ ACTUALIZAR DATOS DE NEGOCIO VIP
 app.put('/api/negocios/:id/vip', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/vip`);
   try {
-    const { username, descripcionVip, telefono, whatsapp, horario, nombre, descripcion } = req.body;
+    const {
+      username,
+      descripcionVip,
+      telefono,
+      whatsapp,
+      horario,
+      nombre,
+      descripcion,
+      categoriaPrincipal,
+      categoriasSecundarias,
+    } = req.body;
 
     if (!username) {
       return res.status(400).json({ 
@@ -352,7 +536,6 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    // ⭐ Verificar que el usuario sea el propietario
     if (negocioData.propietarioUsername !== username) {
       return res.status(403).json({ 
         success: false, 
@@ -360,7 +543,6 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       });
     }
 
-    // ⭐ Verificar que el VIP esté vigente
     if (!negocioData.esVip || !negocioData.vipHasta) {
       return res.status(403).json({ 
         success: false, 
@@ -376,7 +558,13 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       });
     }
 
-    // ⭐ Actualizar campos
+    if (categoriaPrincipal !== undefined) {
+      const validacion = validarCategorias(categoriaPrincipal, categoriasSecundarias);
+      if (!validacion.valido) {
+        return res.status(400).json({ success: false, message: validacion.error });
+      }
+    }
+
     const updateData = {
       timestampActualizacion: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -387,6 +575,8 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     if (horario !== undefined) updateData.horario = horario;
     if (nombre !== undefined) updateData.nombre = nombre;
     if (descripcion !== undefined) updateData.descripcion = descripcion;
+    if (categoriaPrincipal !== undefined) updateData.categoriaPrincipal = categoriaPrincipal;
+    if (categoriasSecundarias !== undefined) updateData.categoriasSecundarias = categoriasSecundarias;
 
     await negocioRef.update(updateData);
 
@@ -402,6 +592,190 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       message: 'Error al actualizar negocio',
       error: error.message
     });
+  }
+});
+
+// ========== RUTAS DE ADMIN ⭐ NUEVO ==========
+
+// ⭐ ADMIN: Editar cualquier negocio (sin ser propietario)
+app.put('/api/admin/negocios/:id', async (req, res) => {
+  console.log(`📡 PUT /api/admin/negocios/${req.params.id}`);
+  try {
+    const {
+      adminUsername,
+      nombre,
+      descripcion,
+      descripcionVip,
+      telefono,
+      whatsapp,
+      horario,
+      categoriaPrincipal,
+      categoriasSecundarias,
+      provincia,
+      municipio,
+      latitud,
+      longitud,
+    } = req.body;
+
+    if (!adminUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Falta campo: adminUsername',
+      });
+    }
+
+    if (!esAdmin(adminUsername)) {
+      console.log(`⛔ Acceso admin denegado a: @${adminUsername}`);
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos de administrador',
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    if (categoriaPrincipal !== undefined) {
+      const validacion = validarCategorias(categoriaPrincipal, categoriasSecundarias);
+      if (!validacion.valido) {
+        return res.status(400).json({ success: false, message: validacion.error });
+      }
+    }
+
+    const updateData = {
+      timestampAdminUpdate: admin.firestore.FieldValue.serverTimestamp(),
+      adminQueModifico: adminUsername,
+    };
+
+    if (nombre !== undefined) updateData.nombre = nombre;
+    if (descripcion !== undefined) updateData.descripcion = descripcion;
+    if (descripcionVip !== undefined) updateData.descripcionVip = descripcionVip;
+    if (telefono !== undefined) updateData.telefono = telefono;
+    if (whatsapp !== undefined) updateData.whatsapp = whatsapp;
+    if (horario !== undefined) updateData.horario = horario;
+    if (categoriaPrincipal !== undefined) updateData.categoriaPrincipal = categoriaPrincipal;
+    if (categoriasSecundarias !== undefined) updateData.categoriasSecundarias = categoriasSecundarias;
+    if (provincia !== undefined) updateData.provincia = provincia;
+    if (municipio !== undefined) updateData.municipio = municipio;
+    if (latitud !== undefined) updateData.latitud = parseFloat(latitud);
+    if (longitud !== undefined) updateData.longitud = parseFloat(longitud);
+
+    await negocioRef.update(updateData);
+
+    console.log(`✅ [ADMIN] Negocio ${req.params.id} editado por @${adminUsername}`);
+    res.json({
+      success: true,
+      message: 'Negocio actualizado por administrador',
+    });
+  } catch (error) {
+    console.error('❌ Error admin al actualizar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar negocio',
+      error: error.message,
+    });
+  }
+});
+
+// ⭐ ADMIN: Borrar cualquier negocio
+app.delete('/api/admin/negocios/:id', async (req, res) => {
+  console.log(`📡 DELETE /api/admin/negocios/${req.params.id}`);
+  try {
+    const { adminUsername } = req.body;
+
+    if (!adminUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Falta campo: adminUsername',
+      });
+    }
+
+    if (!esAdmin(adminUsername)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos de administrador',
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    // Borrar comentarios de la subcolección primero
+    const comentariosRef = negocioRef.collection('comentarios');
+    const comentariosSnap = await comentariosRef.get();
+    const batch = db.batch();
+    comentariosSnap.forEach(doc => batch.delete(doc.ref));
+    batch.delete(negocioRef);
+    await batch.commit();
+
+    console.log(`✅ [ADMIN] Negocio ${req.params.id} borrado por @${adminUsername}`);
+    res.json({
+      success: true,
+      message: 'Negocio eliminado correctamente',
+    });
+  } catch (error) {
+    console.error('❌ Error admin al borrar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al borrar negocio',
+      error: error.message,
+    });
+  }
+});
+
+// ⭐ ADMIN: Estadísticas del sistema
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const { adminUsername } = req.query;
+    if (!esAdmin(adminUsername)) {
+      return res.status(403).json({ success: false, message: 'No autorizado' });
+    }
+
+    const negociosSnap = await db.collection('negocios').get();
+    const totalNegocios = negociosSnap.size;
+
+    const ahora = new Date();
+    let vipVigentes = 0;
+    const porCategoria = {};
+    const porPlan = {};
+
+    negociosSnap.forEach(doc => {
+      const data = doc.data();
+
+      if (data.esVip && data.vipHasta) {
+        const vipHasta = data.vipHasta.toDate();
+        if (vipHasta > ahora) {
+          vipVigentes++;
+          const plan = data.tipoVip || 'desconocido';
+          porPlan[plan] = (porPlan[plan] || 0) + 1;
+        }
+      }
+
+      const cat = data.categoriaPrincipal || 'sin_categoria';
+      porCategoria[cat] = (porCategoria[cat] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        totalNegocios,
+        vipVigentes,
+        porCategoria,
+        porPlan,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error en stats:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -466,7 +840,6 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
       .collection('comentarios')
       .add(comentarioData);
 
-    // Actualizar estadísticas del negocio
     const negocioRef = db.collection('negocios').doc(req.params.negocioId);
     const negocioDoc = await negocioRef.get();
     const negocioData = negocioDoc.data();
@@ -578,11 +951,16 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con soporte VIP)`);
-  console.log(`   POST /api/negocios (con provincia)`);
+  console.log(`   POST /api/negocios (con provincia + categorías) ⭐`);
   console.log(`   GET  /api/negocios/:id`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP`);
   console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP`);
-  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
+  console.log(`   GET  /api/categorias ⭐`);
+  console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
+  console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN`);
+  console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
+  console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
