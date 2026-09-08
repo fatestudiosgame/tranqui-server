@@ -45,20 +45,20 @@ try {
 const db = admin.firestore();
 
 // =========================================================
-// ⭐ CATEGORÍAS VÁLIDAS (fuente de verdad del backend)
+// ⭐ CATEGORÍAS VÁLIDAS (ACTUALIZADAS)
 // Debe coincidir con lib/data/categorias.dart en Flutter
 // =========================================================
 const CATEGORIAS_VALIDAS = [
   // Comida
-  'restaurante', 'cafeteria', 'bar', 'comida_rapida', 'reposteria', 'elaborador_alimentos',
+  'restaurante', 'cafeteria', 'bar', 'reposteria', 'elaborador_alimentos',
   // Compras
-  'mercado', 'supermercado', 'ropa_calzado', 'ferreteria', 'farmacia', 'electronica', 'papeleria',
+  'mercado', 'ropa_calzado', 'ferreteria', 'farmacia', 'electronica', 'papeleria',
   // Belleza
   'peluqueria', 'salon_belleza', 'tatuajes',
-  // Talleres
-  'taller_electronica', 'reparacion_celulares', 'taller_mecanico', 'costura',
+  // Taller
+  'taller_electronica', 'taller_mecanico', 'costura',
   // Ocio
-  'sala_juegos', 'cibercafe', 'eventos',
+  'sala_juegos', 'billar', 'piscina', 'eventos',
   // Salud
   'consulta_medica', 'veterinaria',
   // Transporte
@@ -290,7 +290,7 @@ app.get('/api/categorias', async (req, res) => {
   }
 });
 
-// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore
+// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore (ACTUALIZADAS)
 // ⚠️ ELIMINAR ESTE ENDPOINT DESPUÉS DE USARLO UNA VEZ
 app.post('/api/admin/poblar-categorias', async (req, res) => {
   const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'TRANQUI_ADMIN_2026';
@@ -300,54 +300,80 @@ app.post('/api/admin/poblar-categorias', async (req, res) => {
 
   try {
     const categoriasDefinicion = [
-      { id: 'restaurante', nombre: 'Restaurante / Paladar', grupo: 'comida', orden: 1 },
-      { id: 'cafeteria', nombre: 'Cafetería / Cafetín', grupo: 'comida', orden: 2 },
-      { id: 'bar', nombre: 'Bar / Centro nocturno', grupo: 'comida', orden: 3 },
-      { id: 'comida_rapida', nombre: 'Pizzería / Comida rápida', grupo: 'comida', orden: 4 },
-      { id: 'reposteria', nombre: 'Repostería / Dulcería', grupo: 'comida', orden: 5 },
-      { id: 'elaborador_alimentos', nombre: 'Elaborador de alimentos (MIPYME)', grupo: 'comida', orden: 6 },
-      { id: 'mercado', nombre: 'Mercado / Bodega / Tienda', grupo: 'compras', orden: 1 },
-      { id: 'supermercado', nombre: 'Supermercado / Minisuper', grupo: 'compras', orden: 2 },
-      { id: 'ropa_calzado', nombre: 'Tienda de ropa y calzado', grupo: 'compras', orden: 3 },
-      { id: 'ferreteria', nombre: 'Ferretería / Materiales de construcción', grupo: 'compras', orden: 4 },
-      { id: 'farmacia', nombre: 'Farmacia / Óptica', grupo: 'compras', orden: 5 },
-      { id: 'electronica', nombre: 'Tienda de celulares / Electrónica', grupo: 'compras', orden: 6 },
-      { id: 'papeleria', nombre: 'Librería / Papelería / Imprenta', grupo: 'compras', orden: 7 },
+      // Comida
+      { id: 'restaurante', nombre: 'Restaurante/Paladar', grupo: 'comida', orden: 1 },
+      { id: 'cafeteria', nombre: 'Cafetería/Pizzería', grupo: 'comida', orden: 2 },
+      { id: 'bar', nombre: 'Bar/Centro Nocturno', grupo: 'comida', orden: 3 },
+      { id: 'reposteria', nombre: 'Dulcería/Heladería', grupo: 'comida', orden: 4 },
+      { id: 'elaborador_alimentos', nombre: 'Elaborador de Alimentos', grupo: 'comida', orden: 5 },
+      // Compras
+      { id: 'mercado', nombre: 'Mercado/Bodega/Tienda', grupo: 'compras', orden: 1 },
+      { id: 'ropa_calzado', nombre: 'Tienda de Ropa y calzado', grupo: 'compras', orden: 2 },
+      { id: 'ferreteria', nombre: 'Ferretería y Construcción', grupo: 'compras', orden: 3 },
+      { id: 'farmacia', nombre: 'Farmacia/Óptica', grupo: 'compras', orden: 4 },
+      { id: 'electronica', nombre: 'Tienda de Celulares y Electrónica', grupo: 'compras', orden: 5 },
+      { id: 'papeleria', nombre: 'Librería', grupo: 'compras', orden: 6 },
+      // Belleza
       { id: 'peluqueria', nombre: 'Peluquería / Barbería', grupo: 'belleza', orden: 1 },
       { id: 'salon_belleza', nombre: 'Salón de belleza / Uñas / Spa', grupo: 'belleza', orden: 2 },
       { id: 'tatuajes', nombre: 'Tatuajes / Piercings', grupo: 'belleza', orden: 3 },
-      { id: 'taller_electronica', nombre: 'Taller de electrónica', grupo: 'talleres', orden: 1 },
-      { id: 'reparacion_celulares', nombre: 'Reparación de celulares', grupo: 'talleres', orden: 2 },
-      { id: 'taller_mecanico', nombre: 'Taller mecánico / Gomería', grupo: 'talleres', orden: 3 },
-      { id: 'costura', nombre: 'Costura / Zapatería / Cerrajería', grupo: 'talleres', orden: 4 },
-      { id: 'sala_juegos', nombre: 'Sala de juegos / Videojuegos / Billar', grupo: 'ocio', orden: 1 },
-      { id: 'cibercafe', nombre: 'Cibercafé / Navegación / Punto WiFi', grupo: 'ocio', orden: 2 },
-      { id: 'eventos', nombre: 'Eventos / Fiestas / Alquiler de salón', grupo: 'ocio', orden: 3 },
-      { id: 'consulta_medica', nombre: 'Consultorio / Clínica privada', grupo: 'salud', orden: 1 },
-      { id: 'veterinaria', nombre: 'Veterinaria / Pet shop', grupo: 'salud', orden: 2 },
-      { id: 'taxi', nombre: 'Taxi / Transportista local', grupo: 'transporte', orden: 1 },
-      { id: 'transporte_provincial', nombre: 'Transporte interprovincial / Encomiendas', grupo: 'transporte', orden: 2 },
-      { id: 'alquiler_vehiculos', nombre: 'Alquiler de vehículos / Bicicletas', grupo: 'transporte', orden: 3 },
-      { id: 'fotografia', nombre: 'Fotografía / Diseño', grupo: 'servicios', orden: 1 },
-      { id: 'gestoria', nombre: 'Gestor / Contador / Asesor', grupo: 'servicios', orden: 2 },
-      { id: 'tutorias', nombre: 'Tutorías / Academia / Clases', grupo: 'servicios', orden: 3 },
-      { id: 'recargas', nombre: 'Punto de recarga / Transfermóvil / CADECA', grupo: 'servicios', orden: 4 },
+      // Taller
+      { id: 'taller_electronica', nombre: 'Electrónica/Celulares', grupo: 'talleres', orden: 1 },
+      { id: 'taller_mecanico', nombre: 'Mecánico/Chapista', grupo: 'talleres', orden: 2 },
+      { id: 'costura', nombre: 'Costura/Zapatería/Cerrajería', grupo: 'talleres', orden: 3 },
+      // Ocio
+      { id: 'sala_juegos', nombre: 'Sala de Juegos/ Cine 3D', grupo: 'ocio', orden: 1 },
+      { id: 'billar', nombre: 'Billar/Bolos', grupo: 'ocio', orden: 2 },
+      { id: 'piscina', nombre: 'Piscina', grupo: 'ocio', orden: 3 },
+      { id: 'eventos', nombre: 'Eventos/Fiestas', grupo: 'ocio', orden: 4 },
+      // Salud
+      { id: 'consulta_medica', nombre: 'Clinica/Dentista', grupo: 'salud', orden: 1 },
+      { id: 'veterinaria', nombre: 'Veterinaria', grupo: 'salud', orden: 2 },
+      // Transporte
+      { id: 'taxi', nombre: 'Taxi', grupo: 'transporte', orden: 1 },
+      { id: 'transporte_provincial', nombre: 'Transporte Interprovincial', grupo: 'transporte', orden: 2 },
+      { id: 'alquiler_vehiculos', nombre: 'Alquiler de Vehículos', grupo: 'transporte', orden: 3 },
+      // Servicios
+      { id: 'fotografia', nombre: 'Fotografía/Diseño/Audiovisuales', grupo: 'servicios', orden: 1 },
+      { id: 'gestoria', nombre: 'Gestor/Contador', grupo: 'servicios', orden: 2 },
+      { id: 'tutorias', nombre: 'Tutorías/Academia', grupo: 'servicios', orden: 3 },
+      { id: 'recargas', nombre: 'Recargas/Transfermóvil', grupo: 'servicios', orden: 4 },
+      // Válvula de escape
       { id: 'otros', nombre: 'Otros servicios', grupo: 'otros', orden: 99 },
     ];
 
     const batch = db.batch();
     categoriasDefinicion.forEach(cat => {
       const ref = db.collection('categorias').doc(cat.id);
-      batch.set(ref, { ...cat, activo: true });
+      batch.set(ref, { ...cat, activo: true }, { merge: true });
     });
+
+    // ⭐ Desactivar categorías obsoletas que ya no se usan
+    const categoriasObsoletas = [
+      'comida_rapida',
+      'supermercado',
+      'reparacion_celulares',
+      'cibercafe',
+    ];
+
+    for (const id of categoriasObsoletas) {
+      const ref = db.collection('categorias').doc(id);
+      const doc = await ref.get();
+      if (doc.exists) {
+        batch.set(ref, { activo: false }, { merge: true });
+        console.log(`🗑️ Categoría obsoleta desactivada: ${id}`);
+      }
+    }
 
     await batch.commit();
 
     console.log(`✅ ${categoriasDefinicion.length} categorías pobladas en Firestore`);
+    console.log(`🗑️ ${categoriasObsoletas.length} categorías obsoletas desactivadas`);
     res.json({
       success: true,
-      message: `${categoriasDefinicion.length} categorías pobladas correctamente`,
-      categorias: categoriasDefinicion.map(c => c.id)
+      message: `${categoriasDefinicion.length} categorías pobladas correctamente, ${categoriasObsoletas.length} obsoletas desactivadas`,
+      categorias: categoriasDefinicion.map(c => c.id),
+      obsoletas: categoriasObsoletas
     });
   } catch (error) {
     console.error('❌ Error al poblar categorías:', error);
@@ -781,13 +807,13 @@ app.get('/api/admin/stats', async (req, res) => {
   }
 });
 
-// ⭐ ADMIN: Cambiar estado VIP de cualquier negocio (con soporte para pruebas)
+// ⭐ ADMIN: Cambiar estado VIP de cualquier negocio (con soporte para pruebas y cambio de tipo)
 app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
   console.log(`📡 PUT /api/admin/negocios/${req.params.id}/vip-status`);
   try {
     const {
       adminUsername,
-      accion,  // 'reclamar' | 'liberar' | 'extender'
+      accion,  // 'reclamar' | 'liberar' | 'extender' | 'cambiar-tipo'
       tipoVip,
       propietarioUsername,
       vipHasta,
@@ -867,10 +893,31 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         ...updateData,
         vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
       };
+    } else if (accion === 'cambiar-tipo') {
+      // ⭐ NUEVO: Cambiar tipo de VIP
+      if (!tipoVip) {
+        return res.status(400).json({
+          success: false,
+          message: 'Para cambiar tipo se requiere: tipoVip',
+        });
+      }
+      
+      const negocioActual = negocioDoc.data();
+      if (!negocioActual.esVip) {
+        return res.status(400).json({
+          success: false,
+          message: 'El negocio no es VIP actualmente',
+        });
+      }
+      
+      updateData = {
+        ...updateData,
+        tipoVip: tipoVip.toLowerCase(),
+      };
     } else {
       return res.status(400).json({
         success: false,
-        message: 'Acción inválida. Usa: reclamar, liberar, o extender',
+        message: 'Acción inválida. Usa: reclamar, liberar, extender, o cambiar-tipo',
       });
     }
 
