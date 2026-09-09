@@ -45,33 +45,22 @@ try {
 const db = admin.firestore();
 
 // =========================================================
-// ⭐ CATEGORÍAS VÁLIDAS (ACTUALIZADAS)
-// Debe coincidir con lib/data/categorias.dart en Flutter
+// CATEGORÍAS VÁLIDAS
 // =========================================================
 const CATEGORIAS_VALIDAS = [
-  // Comida
   'restaurante', 'cafeteria', 'bar', 'reposteria', 'elaborador_alimentos',
-  // Compras
   'mercado', 'ropa_calzado', 'ferreteria', 'farmacia', 'electronica', 'papeleria',
-  // Belleza
   'peluqueria', 'salon_belleza', 'tatuajes',
-  // Taller
   'taller_electronica', 'taller_mecanico', 'costura',
-  // Ocio
   'sala_juegos', 'billar', 'piscina', 'eventos',
-  // Salud
   'consulta_medica', 'veterinaria',
-  // Transporte
   'taxi', 'transporte_provincial', 'alquiler_vehiculos',
-  // Servicios
   'fotografia', 'gestoria', 'tutorias', 'recargas',
-  // Válvula de escape
   'otros',
 ];
 
 // =========================================================
-// ⭐ USUARIOS ADMIN
-// Estos usuarios pueden editar/borrar CUALQUIER negocio
+// USUARIOS ADMIN
 // =========================================================
 const ADMIN_USERNAMES = [
   'noblesse',
@@ -82,7 +71,7 @@ function esAdmin(username) {
 }
 
 // =========================================================
-// ⭐ HELPER: Validar categorías de un negocio
+// HELPER: Validar categorías
 // =========================================================
 function validarCategorias(categoriaPrincipal, categoriasSecundarias) {
   if (!categoriaPrincipal || typeof categoriaPrincipal !== 'string') {
@@ -290,8 +279,7 @@ app.get('/api/categorias', async (req, res) => {
   }
 });
 
-// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore (ACTUALIZADAS)
-// ⚠️ ELIMINAR ESTE ENDPOINT DESPUÉS DE USARLO UNA VEZ
+// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore
 app.post('/api/admin/poblar-categorias', async (req, res) => {
   const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'TRANQUI_ADMIN_2026';
   if (req.headers['x-admin-token'] !== ADMIN_TOKEN) {
@@ -348,7 +336,7 @@ app.post('/api/admin/poblar-categorias', async (req, res) => {
       batch.set(ref, { ...cat, activo: true }, { merge: true });
     });
 
-    // ⭐ Desactivar categorías obsoletas que ya no se usan
+    // Desactivar categorías obsoletas
     const categoriasObsoletas = [
       'comida_rapida',
       'supermercado',
@@ -620,9 +608,8 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
   }
 });
 
-// ========== RUTAS DE ADMIN ⭐ ==========
+// ========== RUTAS DE ADMIN ==========
 
-// ⭐ ADMIN: Editar cualquier negocio (sin ser propietario)
 app.put('/api/admin/negocios/:id', async (req, res) => {
   console.log(`📡 PUT /api/admin/negocios/${req.params.id}`);
   try {
@@ -706,7 +693,6 @@ app.put('/api/admin/negocios/:id', async (req, res) => {
   }
 });
 
-// ⭐ ADMIN: Borrar cualquier negocio
 app.delete('/api/admin/negocios/:id', async (req, res) => {
   console.log(`📡 DELETE /api/admin/negocios/${req.params.id}`);
   try {
@@ -737,6 +723,12 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
     const comentariosSnap = await comentariosRef.get();
     const batch = db.batch();
     comentariosSnap.forEach(doc => batch.delete(doc.ref));
+    
+    // También borrar catálogo si existe
+    const catalogoRef = negocioRef.collection('catalogo');
+    const catalogoSnap = await catalogoRef.get();
+    catalogoSnap.forEach(doc => batch.delete(doc.ref));
+    
     batch.delete(negocioRef);
     await batch.commit();
 
@@ -755,7 +747,6 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
   }
 });
 
-// ⭐ ADMIN: Estadísticas del sistema
 app.get('/api/admin/stats', async (req, res) => {
   try {
     const { adminUsername } = req.query;
@@ -807,13 +798,12 @@ app.get('/api/admin/stats', async (req, res) => {
   }
 });
 
-// ⭐ ADMIN: Cambiar estado VIP de cualquier negocio (con soporte para pruebas y cambio de tipo)
 app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
   console.log(`📡 PUT /api/admin/negocios/${req.params.id}/vip-status`);
   try {
     const {
       adminUsername,
-      accion,  // 'reclamar' | 'liberar' | 'extender' | 'cambiar-tipo'
+      accion,
       tipoVip,
       propietarioUsername,
       vipHasta,
@@ -894,7 +884,6 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
       };
     } else if (accion === 'cambiar-tipo') {
-      // ⭐ NUEVO: Cambiar tipo de VIP
       if (!tipoVip) {
         return res.status(400).json({
           success: false,
@@ -938,7 +927,6 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
   }
 });
 
-// ⭐ ADMIN: Verificar si un username es admin
 app.get('/api/admin/verificar', async (req, res) => {
   try {
     const { username } = req.query;
@@ -951,6 +939,247 @@ app.get('/api/admin/verificar', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ========== CATÁLOGO DE NEGOCIOS VIP ==========
+
+app.get('/api/negocios/:negocioId/catalogo', async (req, res) => {
+  console.log(`📡 GET /api/negocios/${req.params.negocioId}/catalogo`);
+  try {
+    const snapshot = await db
+      .collection('negocios')
+      .doc(req.params.negocioId)
+      .collection('catalogo')
+      .where('activo', '==', true)
+      .orderBy('orden', 'asc')
+      .get();
+
+    const productos = [];
+    snapshot.forEach(doc => {
+      productos.push({ id: doc.id, ...doc.data() });
+    });
+
+    console.log(`✅ Catálogo ${req.params.negocioId}: ${productos.length} productos`);
+    res.json({ success: true, data: productos });
+  } catch (error) {
+    console.error('❌ Error al obtener catálogo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener catálogo',
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/negocios/:negocioId/catalogo/agrupado', async (req, res) => {
+  console.log(`📡 GET /api/negocios/${req.params.negocioId}/catalogo/agrupado`);
+  try {
+    const snapshot = await db
+      .collection('negocios')
+      .doc(req.params.negocioId)
+      .collection('catalogo')
+      .where('activo', '==', true)
+      .orderBy('orden', 'asc')
+      .get();
+
+    const productosPorCategoria = {};
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      const categoria = data.categoria || 'General';
+      if (!productosPorCategoria[categoria]) {
+        productosPorCategoria[categoria] = [];
+      }
+      productosPorCategoria[categoria].push({ id: doc.id, ...data });
+    });
+
+    console.log(`✅ Catálogo agrupado ${req.params.negocioId}: ${Object.keys(productosPorCategoria).length} categorías`);
+    res.json({ success: true, data: productosPorCategoria });
+  } catch (error) {
+    console.error('❌ Error al obtener catálogo agrupado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener catálogo',
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
+  console.log(`📡 POST /api/negocios/${req.params.negocioId}/catalogo`);
+  try {
+    const {
+      adminUsername,
+      propietarioUsername,
+      nombre,
+      descripcion,
+      precio,
+      moneda,
+      categoria,
+      imagenUrl,
+      orden,
+    } = req.body;
+
+    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esPropietario = negocioData.propietarioUsername === propietarioUsername;
+
+    if (!esAdminUser && !esPropietario) {
+      return res.status(403).json({ success: false, message: 'Sin permisos para agregar productos' });
+    }
+
+    if (!negocioData.esVip) {
+      return res.status(403).json({ success: false, message: 'Solo los negocios VIP pueden tener catálogo' });
+    }
+
+    if (!nombre || nombre.trim() === '') {
+      return res.status(400).json({ success: false, message: 'El nombre del producto es obligatorio' });
+    }
+
+    const productoData = {
+      nombre: nombre.trim(),
+      descripcion: descripcion ? descripcion.trim() : '',
+      precio: precio ? parseFloat(precio) : 0,
+      moneda: moneda || 'CUP',
+      categoria: categoria || 'General',
+      imagenUrl: imagenUrl || '',
+      orden: orden || 0,
+      activo: true,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const docRef = await negocioRef.collection('catalogo').add(productoData);
+    
+    console.log(`✅ Producto agregado al catálogo de ${req.params.negocioId}: ${docRef.id} (${nombre})`);
+    res.status(201).json({
+      success: true,
+      message: 'Producto agregado correctamente',
+      id: docRef.id
+    });
+  } catch (error) {
+    console.error('❌ Error al agregar producto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al agregar producto',
+      error: error.message
+    });
+  }
+});
+
+app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
+  console.log(`📡 PUT /api/negocios/${req.params.negocioId}/catalogo/${req.params.productoId}`);
+  try {
+    const {
+      adminUsername,
+      propietarioUsername,
+      nombre,
+      descripcion,
+      precio,
+      moneda,
+      categoria,
+      imagenUrl,
+      orden,
+      activo,
+    } = req.body;
+
+    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esPropietario = negocioData.propietarioUsername === propietarioUsername;
+
+    if (!esAdminUser && !esPropietario) {
+      return res.status(403).json({ success: false, message: 'Sin permisos para editar productos' });
+    }
+
+    const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
+    const productoDoc = await productoRef.get();
+
+    if (!productoDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Producto no encontrado' });
+    }
+
+    const updateData = {
+      timestampActualizacion: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (nombre !== undefined) updateData.nombre = nombre.trim();
+    if (descripcion !== undefined) updateData.descripcion = descripcion.trim();
+    if (precio !== undefined) updateData.precio = parseFloat(precio);
+    if (moneda !== undefined) updateData.moneda = moneda;
+    if (categoria !== undefined) updateData.categoria = categoria;
+    if (imagenUrl !== undefined) updateData.imagenUrl = imagenUrl;
+    if (orden !== undefined) updateData.orden = orden;
+    if (activo !== undefined) updateData.activo = activo;
+
+    await productoRef.update(updateData);
+
+    console.log(`✅ Producto ${req.params.productoId} actualizado`);
+    res.json({ success: true, message: 'Producto actualizado correctamente' });
+  } catch (error) {
+    console.error('❌ Error al actualizar producto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar producto',
+      error: error.message
+    });
+  }
+});
+
+app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
+  console.log(`📡 DELETE /api/negocios/${req.params.negocioId}/catalogo/${req.params.productoId}`);
+  try {
+    const { adminUsername, propietarioUsername } = req.body;
+
+    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esPropietario = negocioData.propietarioUsername === propietarioUsername;
+
+    if (!esAdminUser && !esPropietario) {
+      return res.status(403).json({ success: false, message: 'Sin permisos para eliminar productos' });
+    }
+
+    const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
+    const productoDoc = await productoRef.get();
+
+    if (!productoDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Producto no encontrado' });
+    }
+
+    // Soft delete: marcar como inactivo
+    await productoRef.update({
+      activo: false,
+      timestampEliminacion: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`✅ Producto ${req.params.productoId} eliminado (soft delete)`);
+    res.json({ success: true, message: 'Producto eliminado correctamente' });
+  } catch (error) {
+    console.error('❌ Error al eliminar producto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar producto',
+      error: error.message
+    });
   }
 });
 
@@ -1138,6 +1367,11 @@ app.listen(port, () => {
   console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
   console.log(`   GET  /api/admin/verificar       ⭐ ADMIN`);
   console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
+  console.log(`   GET  /api/negocios/:id/catalogo ⭐ CATÁLOGO`);
+  console.log(`   GET  /api/negocios/:id/catalogo/agrupado ⭐ CATÁLOGO`);
+  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO`);
+  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO`);
+  console.log(`   DELETE /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
