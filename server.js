@@ -327,6 +327,62 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
   }
 });
 
+// ========== LICENCIAS APKLIS: ACTIVAR (preserva fecha original) ==========
+// OPCIÓN A: la primera activación guarda la fecha real; las siguientes
+// devuelven SIEMPRE la fecha original (nunca se sobreescribe).
+// Si un usuario antiguo reinstala y reporta desfase, se corrige a mano
+// en Firebase Console: colección "licencias" → campo "fechaActivacion".
+
+app.post('/api/licencias/activar', async (req, res) => {
+  console.log('📡 POST /api/licencias/activar');
+  try {
+    const { licencia, tipoPlan, username } = req.body;
+
+    if (!licencia || !tipoPlan) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Faltan campos: licencia, tipoPlan' 
+      });
+    }
+
+    // Buscar si ya existe activación previa
+    const doc = await db.collection('licencias').doc(licencia).get();
+
+    if (doc.exists) {
+      // Ya activada antes: devolver la fecha original (NO se sobreescribe)
+      const data = doc.data();
+      const fechaActivacion = data.fechaActivacion ? data.fechaActivacion.toDate() : null;
+      console.log(`🔁 Licencia ya activada: ${licencia.substring(0, 8)}... (original: ${fechaActivacion ? fechaActivacion.toISOString() : 'sin fecha'})`);
+      return res.json({
+        success: true,
+        fechaActivacion: fechaActivacion ? fechaActivacion.toISOString() : null,
+        tipoPlan: data.tipoPlan,
+        yaExistia: true,
+      });
+    }
+
+    // Primera vez: guardar fecha de activación (AHORA = fecha real de compra)
+    const fechaActivacion = admin.firestore.Timestamp.now();
+    await db.collection('licencias').doc(licencia).set({
+      tipoPlan,
+      username: username || 'desconocido',
+      fechaActivacion,
+      fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan})`);
+    res.json({
+      success: true,
+      fechaActivacion: fechaActivacion.toDate().toISOString(),
+      tipoPlan,
+      yaExistia: false,
+    });
+  } catch (error) {
+    console.error('❌ Error al activar licencia:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ========== RUTAS PARA CATEGORÍAS ==========
 
 app.get('/api/categorias', async (req, res) => {
@@ -1448,6 +1504,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
+  console.log(`   POST /api/licencias/activar     ⭐ LICENCIAS (fecha original)`);
   console.log(`   GET  /api/categorias ⭐`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
   console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
