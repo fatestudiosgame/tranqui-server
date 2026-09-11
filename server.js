@@ -328,10 +328,6 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
 });
 
 // ========== LICENCIAS APKLIS: ACTIVAR (preserva fecha original) ==========
-// OPCIÓN A: la primera activación guarda la fecha real; las siguientes
-// devuelven SIEMPRE la fecha original (nunca se sobreescribe).
-// Si un usuario antiguo reinstala y reporta desfase, se corrige a mano
-// en Firebase Console: colección "licencias" → campo "fechaActivacion".
 
 app.post('/api/licencias/activar', async (req, res) => {
   console.log('📡 POST /api/licencias/activar');
@@ -345,11 +341,9 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
-    // Buscar si ya existe activación previa
     const doc = await db.collection('licencias').doc(licencia).get();
 
     if (doc.exists) {
-      // Ya activada antes: devolver la fecha original (NO se sobreescribe)
       const data = doc.data();
       const fechaActivacion = data.fechaActivacion ? data.fechaActivacion.toDate() : null;
       console.log(`🔁 Licencia ya activada: ${licencia.substring(0, 8)}... (original: ${fechaActivacion ? fechaActivacion.toISOString() : 'sin fecha'})`);
@@ -361,7 +355,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
-    // Primera vez: guardar fecha de activación (AHORA = fecha real de compra)
     const fechaActivacion = admin.firestore.Timestamp.now();
     await db.collection('licencias').doc(licencia).set({
       tipoPlan,
@@ -420,45 +413,36 @@ app.post('/api/admin/poblar-categorias', async (req, res) => {
 
   try {
     const categoriasDefinicion = [
-      // Comida
       { id: 'restaurante', nombre: 'Restaurante/Paladar', grupo: 'comida', orden: 1 },
       { id: 'cafeteria', nombre: 'Cafetería/Pizzería', grupo: 'comida', orden: 2 },
       { id: 'bar', nombre: 'Bar/Centro Nocturno', grupo: 'comida', orden: 3 },
       { id: 'reposteria', nombre: 'Dulcería/Heladería', grupo: 'comida', orden: 4 },
       { id: 'elaborador_alimentos', nombre: 'Elaborador de Alimentos', grupo: 'comida', orden: 5 },
-      // Compras
       { id: 'mercado', nombre: 'Mercado/Bodega/Tienda', grupo: 'compras', orden: 1 },
       { id: 'ropa_calzado', nombre: 'Tienda de Ropa y calzado', grupo: 'compras', orden: 2 },
       { id: 'ferreteria', nombre: 'Ferretería y Construcción', grupo: 'compras', orden: 3 },
       { id: 'farmacia', nombre: 'Farmacia/Óptica', grupo: 'compras', orden: 4 },
       { id: 'electronica', nombre: 'Tienda de Celulares y Electrónica', grupo: 'compras', orden: 5 },
       { id: 'papeleria', nombre: 'Librería', grupo: 'compras', orden: 6 },
-      // Belleza
       { id: 'peluqueria', nombre: 'Peluquería / Barbería', grupo: 'belleza', orden: 1 },
       { id: 'salon_belleza', nombre: 'Salón de belleza / Uñas / Spa', grupo: 'belleza', orden: 2 },
       { id: 'tatuajes', nombre: 'Tatuajes / Piercings', grupo: 'belleza', orden: 3 },
-      // Taller
       { id: 'taller_electronica', nombre: 'Electrónica/Celulares', grupo: 'talleres', orden: 1 },
       { id: 'taller_mecanico', nombre: 'Mecánico/Chapista', grupo: 'talleres', orden: 2 },
       { id: 'costura', nombre: 'Costura/Zapatería/Cerrajería', grupo: 'talleres', orden: 3 },
-      // Ocio
       { id: 'sala_juegos', nombre: 'Sala de Juegos/ Cine 3D', grupo: 'ocio', orden: 1 },
       { id: 'billar', nombre: 'Billar/Bolos', grupo: 'ocio', orden: 2 },
       { id: 'piscina', nombre: 'Piscina', grupo: 'ocio', orden: 3 },
       { id: 'eventos', nombre: 'Eventos/Fiestas', grupo: 'ocio', orden: 4 },
-      // Salud
       { id: 'consulta_medica', nombre: 'Clinica/Dentista', grupo: 'salud', orden: 1 },
       { id: 'veterinaria', nombre: 'Veterinaria', grupo: 'salud', orden: 2 },
-      // Transporte
       { id: 'taxi', nombre: 'Taxi', grupo: 'transporte', orden: 1 },
       { id: 'transporte_provincial', nombre: 'Transporte Interprovincial', grupo: 'transporte', orden: 2 },
       { id: 'alquiler_vehiculos', nombre: 'Alquiler de Vehículos', grupo: 'transporte', orden: 3 },
-      // Servicios
       { id: 'fotografia', nombre: 'Fotografía/Diseño/Audiovisuales', grupo: 'servicios', orden: 1 },
       { id: 'gestoria', nombre: 'Gestor/Contador', grupo: 'servicios', orden: 2 },
       { id: 'tutorias', nombre: 'Tutorías/Academia', grupo: 'servicios', orden: 3 },
       { id: 'recargas', nombre: 'Recargas/Transfermóvil', grupo: 'servicios', orden: 4 },
-      // Válvula de escape
       { id: 'otros', nombre: 'Otros servicios', grupo: 'otros', orden: 99 },
     ];
 
@@ -468,7 +452,6 @@ app.post('/api/admin/poblar-categorias', async (req, res) => {
       batch.set(ref, { ...cat, activo: true }, { merge: true });
     });
 
-    // Desactivar categorías obsoletas
     const categoriasObsoletas = [
       'comida_rapida',
       'supermercado',
@@ -857,7 +840,6 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
     const batch = db.batch();
     comentariosSnap.forEach(doc => batch.delete(doc.ref));
     
-    // También borrar catálogo si existe
     const catalogoRef = negocioRef.collection('catalogo');
     const catalogoSnap = await catalogoRef.get();
     catalogoSnap.forEach(doc => batch.delete(doc.ref));
@@ -1077,9 +1059,8 @@ app.get('/api/admin/verificar', async (req, res) => {
   }
 });
 
-// ========== CATÁLOGO DE NEGOCIOS VIP ⭐ FIX ÍNDICE ==========
+// ========== CATÁLOGO DE NEGOCIOS VIP ==========
 
-// ⭐ CORREGIDO: Sin orderBy (ordena en memoria para evitar índice compuesto)
 app.get('/api/negocios/:negocioId/catalogo', async (req, res) => {
   console.log(`📡 GET /api/negocios/${req.params.negocioId}/catalogo`);
   try {
@@ -1095,7 +1076,6 @@ app.get('/api/negocios/:negocioId/catalogo', async (req, res) => {
       productos.push({ id: doc.id, ...doc.data() });
     });
 
-    // Ordenar manualmente por campo 'orden'
     productos.sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
     console.log(`✅ Catálogo ${req.params.negocioId}: ${productos.length} productos`);
@@ -1110,7 +1090,6 @@ app.get('/api/negocios/:negocioId/catalogo', async (req, res) => {
   }
 });
 
-// ⭐ CORREGIDO: Sin orderBy (ordena en memoria para evitar índice compuesto)
 app.get('/api/negocios/:negocioId/catalogo/agrupado', async (req, res) => {
   console.log(`📡 GET /api/negocios/${req.params.negocioId}/catalogo/agrupado`);
   try {
@@ -1131,7 +1110,6 @@ app.get('/api/negocios/:negocioId/catalogo/agrupado', async (req, res) => {
       productosPorCategoria[categoria].push({ id: doc.id, ...data });
     });
 
-    // Ordenar manualmente cada categoría
     for (const cat in productosPorCategoria) {
       productosPorCategoria[cat].sort((a, b) => (a.orden || 0) - (b.orden || 0));
     }
@@ -1148,6 +1126,7 @@ app.get('/api/negocios/:negocioId/catalogo/agrupado', async (req, res) => {
   }
 });
 
+// ⭐ NUEVO: campo 'agotado' en productoData
 app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
   console.log(`📡 POST /api/negocios/${req.params.negocioId}/catalogo`);
   try {
@@ -1161,6 +1140,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
       categoria,
       imagenUrl,
       orden,
+      agotado,
     } = req.body;
 
     const negocioRef = db.collection('negocios').doc(req.params.negocioId);
@@ -1195,6 +1175,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
       imagenUrl: imagenUrl || '',
       orden: orden || 0,
       activo: true,
+      agotado: agotado === true,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -1216,6 +1197,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
   }
 });
 
+// ⭐ NUEVO: campo 'agotado' en updateData
 app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.negocioId}/catalogo/${req.params.productoId}`);
   try {
@@ -1230,6 +1212,7 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
       imagenUrl,
       orden,
       activo,
+      agotado,
     } = req.body;
 
     const negocioRef = db.collection('negocios').doc(req.params.negocioId);
@@ -1266,6 +1249,7 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
     if (imagenUrl !== undefined) updateData.imagenUrl = imagenUrl;
     if (orden !== undefined) updateData.orden = orden;
     if (activo !== undefined) updateData.activo = activo;
+    if (agotado !== undefined) updateData.agotado = agotado;
 
     await productoRef.update(updateData);
 
@@ -1308,7 +1292,6 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
       return res.status(404).json({ success: false, message: 'Producto no encontrado' });
     }
 
-    // Soft delete: marcar como inactivo
     await productoRef.update({
       activo: false,
       timestampEliminacion: admin.firestore.FieldValue.serverTimestamp(),
@@ -1514,8 +1497,8 @@ app.listen(port, () => {
   console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
   console.log(`   GET  /api/negocios/:id/catalogo ⭐ CATÁLOGO (ordenado en memoria)`);
   console.log(`   GET  /api/negocios/:id/catalogo/agrupado ⭐ CATÁLOGO (ordenado en memoria)`);
-  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO`);
-  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO`);
+  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO (con agotado)`);
+  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (con agotado)`);
   console.log(`   DELETE /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
