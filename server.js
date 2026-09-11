@@ -198,6 +198,7 @@ app.post('/api/negocios', async (req, res) => {
       categoriaPrincipal: categoriaPrincipal,
       categoriasSecundarias: categoriasSecundarias || [],
       esVip: false,
+      fotos: [],
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
     
@@ -246,6 +247,81 @@ app.get('/api/negocios/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener negocio',
+      error: error.message
+    });
+  }
+});
+
+// ========== FOTOS DEL NEGOCIO (Cloudinary URLs) ==========
+
+app.put('/api/negocios/:id/fotos', async (req, res) => {
+  console.log(`📡 PUT /api/negocios/${req.params.id}/fotos`);
+  try {
+    const { username, fotos } = req.body;
+
+    if (!username) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Falta campo: username' 
+      });
+    }
+
+    if (!Array.isArray(fotos)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'fotos debe ser un array' 
+      });
+    }
+
+    if (fotos.length > 30) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Máximo 30 fotos' 
+      });
+    }
+
+    // Validar que todas las URLs empiecen con https://
+    const urlsInvalidas = fotos.filter(f => typeof f !== 'string' || !f.startsWith('https://'));
+    if (urlsInvalidas.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'URLs de fotos inválidas (deben empezar con https://)' 
+      });
+    }
+
+    const negocioRef = db.collection('negocios').doc(req.params.id);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+    const esAdminUser = esAdmin(username);
+    const esPropietario = negocioData.propietarioUsername === username;
+
+    if (!esAdminUser && !esPropietario) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'No tienes permiso para modificar las fotos de este negocio' 
+      });
+    }
+
+    await negocioRef.update({
+      fotos: fotos,
+      timestampFotosUpdate: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`✅ Fotos actualizadas para ${req.params.id} por @${username}: ${fotos.length} foto(s)`);
+    res.json({
+      success: true,
+      message: 'Fotos actualizadas correctamente'
+    });
+  } catch (error) {
+    console.error('❌ Error al actualizar fotos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar fotos',
       error: error.message
     });
   }
@@ -500,6 +576,7 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
       descripcionVip: null,
       esNegocioPrueba: false,
       creadoPorAdmin: null,
+      fotos: [],
       timestampLiberacion: admin.firestore.FieldValue.serverTimestamp()
     });
 
@@ -860,6 +937,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
         esNegocioPrueba: esPrueba,
         creadoPorAdmin: esPrueba ? adminUsername : null,
+        fotos: [],
       };
     } else if (accion === 'liberar') {
       updateData = {
@@ -871,6 +949,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         descripcionVip: null,
         esNegocioPrueba: false,
         creadoPorAdmin: null,
+        fotos: [],
       };
     } else if (accion === 'extender') {
       if (!vipHasta) {
@@ -1368,6 +1447,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP`);
   console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
+  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
   console.log(`   GET  /api/categorias ⭐`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
   console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
