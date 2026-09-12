@@ -71,6 +71,74 @@ function esAdmin(username) {
 }
 
 // =========================================================
+// ⭐ JERARQUÍA DE PLANES (regla upgrade/downgrade)
+// =========================================================
+function rankPlan(plan) {
+  const t = (plan || '').toLowerCase();
+  if (t.includes('oro')) return 3;
+  if (t.includes('plata')) return 2;
+  if (t.includes('bronce')) return 1;
+  return 0; // prueba u otros
+}
+
+function duracionDiasPlan(plan) {
+  const r = rankPlan(plan);
+  if (r === 3) return 360;
+  if (r === 2) return 180;
+  if (r === 1) return 30;
+  return 30;
+}
+
+// =========================================================
+// ⭐ ¿El negocio es VIP con licencia VIGENTE (no expirada)?
+// =========================================================
+function esVipVigente(negocioData) {
+  if (!negocioData || !negocioData.esVip || !negocioData.vipHasta) return false;
+  try {
+    return negocioData.vipHasta.toDate() > new Date();
+  } catch (_) {
+    return false;
+  }
+}
+
+// =========================================================
+// ⭐ DISPARAR GENERACIÓN DE PÁGINAS WEB (GitHub Actions)
+// =========================================================
+let _ultimoDisparoPaginas = 0;
+
+async function dispararGeneracionPaginas(motivo) {
+  const token = process.env.GH_WORKFLOW_TOKEN;
+  if (!token) {
+    console.log('⚠️ Sin GH_WORKFLOW_TOKEN: no se dispara el workflow de páginas');
+    return;
+  }
+  // Debounce: máximo 1 disparo por minuto para no quemar Actions
+  const ahora = Date.now();
+  if (ahora - _ultimoDisparoPaginas < 60000) {
+    console.log('⏳ Disparo de páginas en debounce, ignorando (' + motivo + ')');
+    return;
+  }
+  _ultimoDisparoPaginas = ahora;
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/fatestudiosgame/tranqui-web/actions/workflows/generar-paginas-vip.yml/dispatches',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      }
+    );
+    console.log('🚀 Workflow de páginas disparado (' + motivo + ') → HTTP ' + res.status);
+  } catch (e) {
+    console.error('❌ Error disparando workflow de páginas:', e.message);
+  }
+}
+
+// =========================================================
 // HELPER: Validar categorías
 // =========================================================
 function validarCategorias(categoriaPrincipal, categoriasSecundarias) {
@@ -260,33 +328,18 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
     const { username, fotos } = req.body;
 
     if (!username) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Falta campo: username' 
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: username' });
     }
-
     if (!Array.isArray(fotos)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'fotos debe ser un array' 
-      });
+      return res.status(400).json({ success: false, message: 'fotos debe ser un array' });
     }
-
     if (fotos.length > 30) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Máximo 30 fotos' 
-      });
+      return res.status(400).json({ success: false, message: 'Máximo 30 fotos' });
     }
 
-    // Validar que todas las URLs empiecen con https://
     const urlsInvalidas = fotos.filter(f => typeof f !== 'string' || !f.startsWith('https://'));
     if (urlsInvalidas.length > 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'URLs de fotos inválidas (deben empezar con https://)' 
-      });
+      return res.status(400).json({ success: false, message: 'URLs de fotos inválidas (deben empezar con https://)' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -301,10 +354,7 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
     const esPropietario = negocioData.propietarioUsername === username;
 
     if (!esAdminUser && !esPropietario) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'No tienes permiso para modificar las fotos de este negocio' 
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permiso para modificar las fotos de este negocio' });
     }
 
     await negocioRef.update({
@@ -313,10 +363,8 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
     });
 
     console.log(`✅ Fotos actualizadas para ${req.params.id} por @${username}: ${fotos.length} foto(s)`);
-    res.json({
-      success: true,
-      message: 'Fotos actualizadas correctamente'
-    });
+    dispararGeneracionPaginas('fotos ' + req.params.id);   // ⭐ regenerar página
+    res.json({ success: true, message: 'Fotos actualizadas correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar fotos:', error);
     res.status(500).json({
@@ -327,7 +375,7 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
   }
 });
 
-// ========== LICENCIAS APKLIS: ACTIVAR (preserva fecha original) ==========
+// ========== LICENCIAS APKLIS: ACTIVAR (fecha original + anti-downgrade) ==========
 
 app.post('/api/licencias/activar', async (req, res) => {
   console.log('📡 POST /api/licencias/activar');
@@ -335,12 +383,39 @@ app.post('/api/licencias/activar', async (req, res) => {
     const { licencia, tipoPlan, username } = req.body;
 
     if (!licencia || !tipoPlan) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Faltan campos: licencia, tipoPlan' 
+      return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan' });
+    }
+
+    // ⭐ REGLA ANTI-DOWNGRADE: bloquear bajar de plan con licencia superior vigente
+    const ahoraMs = Date.now();
+    let licenciaVigente = null;
+
+    const snapLicencias = await db
+      .collection('licencias')
+      .where('username', '==', username)
+      .get();
+
+    snapLicencias.forEach((d) => {
+      const data = d.data();
+      if (!data.fechaActivacion) return;
+      const inicio = data.fechaActivacion.toDate().getTime();
+      const fin = inicio + duracionDiasPlan(data.tipoPlan) * 86400000;
+      if (fin > ahoraMs) {
+        if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
+          licenciaVigente = { id: d.id, ...data };
+        }
+      }
+    });
+
+    if (licenciaVigente && rankPlan(tipoPlan) < rankPlan(licenciaVigente.tipoPlan)) {
+      console.log(`⛔ Downgrade bloqueado: @${username} tiene ${licenciaVigente.tipoPlan} vigente, intentó ${tipoPlan}`);
+      return res.status(403).json({
+        success: false,
+        message: `No puedes bajar de plan. Tienes ${licenciaVigente.tipoPlan.toUpperCase()} vigente. Espera a que expire o elige un plan superior.`,
       });
     }
 
+    // Buscar si ya existe activación previa de ESTA licencia
     const doc = await db.collection('licencias').doc(licencia).get();
 
     if (doc.exists) {
@@ -355,6 +430,7 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
+    // Primera vez: guardar fecha de activación (AHORA = fecha real de compra)
     const fechaActivacion = admin.firestore.Timestamp.now();
     await db.collection('licencias').doc(licencia).set({
       tipoPlan,
@@ -372,6 +448,54 @@ app.post('/api/licencias/activar', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error al activar licencia:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ========== ⭐ LICENCIA VIGENTE (fuente de verdad del plan) ==========
+
+app.get('/api/licencias/vigente', async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Falta username' });
+    }
+
+    const ahoraMs = Date.now();
+    let licenciaVigente = null;
+
+    const snapLicencias = await db
+      .collection('licencias')
+      .where('username', '==', username)
+      .get();
+
+    snapLicencias.forEach((d) => {
+      const data = d.data();
+      if (!data.fechaActivacion) return;
+      const inicio = data.fechaActivacion.toDate().getTime();
+      const fin = inicio + duracionDiasPlan(data.tipoPlan) * 86400000;
+      if (fin > ahoraMs) {
+        if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
+          licenciaVigente = {
+            id: d.id,
+            licencia: d.id,
+            tipoPlan: data.tipoPlan,
+            fechaActivacion: data.fechaActivacion.toDate().toISOString(),
+            fechaExpiracion: new Date(fin).toISOString(),
+            diasRestantes: Math.ceil((fin - ahoraMs) / 86400000),
+          };
+        }
+      }
+    });
+
+    if (!licenciaVigente) {
+      return res.json({ success: true, vigente: false, data: null });
+    }
+
+    console.log(`✅ Licencia vigente de @${username}: ${licenciaVigente.tipoPlan} (${licenciaVigente.diasRestantes} días)`);
+    res.json({ success: true, vigente: true, data: licenciaVigente });
+  } catch (error) {
+    console.error('❌ Error en /api/licencias/vigente:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -471,7 +595,6 @@ app.post('/api/admin/poblar-categorias', async (req, res) => {
     await batch.commit();
 
     console.log(`✅ ${categoriasDefinicion.length} categorías pobladas en Firestore`);
-    console.log(`🗑️ ${categoriasObsoletas.length} categorías obsoletas desactivadas`);
     res.json({
       success: true,
       message: `${categoriasDefinicion.length} categorías pobladas correctamente, ${categoriasObsoletas.length} obsoletas desactivadas`,
@@ -492,10 +615,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     const { username, tipoVip, vipHasta } = req.body;
     
     if (!username || !tipoVip || !vipHasta) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Faltan campos: username, tipoVip, vipHasta' 
-      });
+      return res.status(400).json({ success: false, message: 'Faltan campos: username, tipoVip, vipHasta' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -512,10 +632,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
       const ahora = new Date();
       
       if (vipHastaActual && vipHastaActual > ahora) {
-        return res.status(409).json({ 
-          success: false, 
-          message: `Este negocio ya fue reclamado por @${negocioData.propietarioUsername}` 
-        });
+        return res.status(409).json({ success: false, message: `Este negocio ya fue reclamado por @${negocioData.propietarioUsername}` });
       }
     }
 
@@ -548,10 +665,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     const esMismoNegocio = idsVigentes.includes(req.params.id);
     
     if (!esMismoNegocio && negociosVigentes >= limite) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Libera uno primero.` 
-      });
+      return res.status(403).json({ success: false, message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Libera uno primero.` });
     }
 
     await negocioRef.update({
@@ -563,6 +677,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     });
 
     console.log(`✅ Negocio ${req.params.id} reclamado por @${username} (Plan: ${tipoVip})`);
+    dispararGeneracionPaginas('reclamo ' + req.params.id);   // ⭐ crear página ya
     res.json({
       success: true,
       message: 'Negocio reclamado correctamente',
@@ -585,10 +700,7 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
     const { username } = req.body;
 
     if (!username) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Falta campo: username' 
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: username' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -601,10 +713,7 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
     const negocioData = negocioDoc.data();
 
     if (negocioData.propietarioUsername !== username) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'No tienes permiso para liberar este negocio' 
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permiso para liberar este negocio' });
     }
 
     await negocioRef.update({
@@ -620,10 +729,8 @@ app.put('/api/negocios/:id/liberar', async (req, res) => {
     });
 
     console.log(`✅ Negocio ${req.params.id} liberado por @${username}`);
-    res.json({
-      success: true,
-      message: 'Negocio liberado correctamente'
-    });
+    dispararGeneracionPaginas('liberacion ' + req.params.id);   // ⭐ quitar página
+    res.json({ success: true, message: 'Negocio liberado correctamente' });
   } catch (error) {
     console.error('❌ Error al liberar negocio:', error);
     res.status(500).json({
@@ -650,10 +757,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     } = req.body;
 
     if (!username) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Falta campo: username' 
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: username' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -666,25 +770,16 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     const negocioData = negocioDoc.data();
 
     if (negocioData.propietarioUsername !== username) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'No tienes permiso para editar este negocio' 
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permiso para editar este negocio' });
     }
 
     if (!negocioData.esVip || !negocioData.vipHasta) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Este negocio no es VIP' 
-      });
+      return res.status(403).json({ success: false, message: 'Este negocio no es VIP' });
     }
 
     const vipHasta = negocioData.vipHasta.toDate();
     if (vipHasta <= new Date()) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'La licencia VIP ha expirado' 
-      });
+      return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado' });
     }
 
     if (categoriaPrincipal !== undefined) {
@@ -710,10 +805,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     await negocioRef.update(updateData);
 
     console.log(`✅ Negocio ${req.params.id} actualizado por @${username}`);
-    res.json({
-      success: true,
-      message: 'Negocio actualizado correctamente'
-    });
+    res.json({ success: true, message: 'Negocio actualizado correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar negocio:', error);
     res.status(500).json({
@@ -746,18 +838,11 @@ app.put('/api/admin/negocios/:id', async (req, res) => {
     } = req.body;
 
     if (!adminUsername) {
-      return res.status(400).json({
-        success: false,
-        message: 'Falta campo: adminUsername',
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: adminUsername' });
     }
-
     if (!esAdmin(adminUsername)) {
       console.log(`⛔ Acceso admin denegado a: @${adminUsername}`);
-      return res.status(403).json({
-        success: false,
-        message: 'No tienes permisos de administrador',
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permisos de administrador' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -795,10 +880,7 @@ app.put('/api/admin/negocios/:id', async (req, res) => {
     await negocioRef.update(updateData);
 
     console.log(`✅ [ADMIN] Negocio ${req.params.id} editado por @${adminUsername}`);
-    res.json({
-      success: true,
-      message: 'Negocio actualizado por administrador',
-    });
+    res.json({ success: true, message: 'Negocio actualizado por administrador' });
   } catch (error) {
     console.error('❌ Error admin al actualizar:', error);
     res.status(500).json({
@@ -815,17 +897,10 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
     const { adminUsername } = req.body;
 
     if (!adminUsername) {
-      return res.status(400).json({
-        success: false,
-        message: 'Falta campo: adminUsername',
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: adminUsername' });
     }
-
     if (!esAdmin(adminUsername)) {
-      return res.status(403).json({
-        success: false,
-        message: 'No tienes permisos de administrador',
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permisos de administrador' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -848,10 +923,8 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
     await batch.commit();
 
     console.log(`✅ [ADMIN] Negocio ${req.params.id} borrado por @${adminUsername}`);
-    res.json({
-      success: true,
-      message: 'Negocio eliminado correctamente',
-    });
+    dispararGeneracionPaginas('borrado ' + req.params.id);   // ⭐ quitar página
+    res.json({ success: true, message: 'Negocio eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error admin al borrar:', error);
     res.status(500).json({
@@ -926,17 +999,10 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
     } = req.body;
 
     if (!adminUsername) {
-      return res.status(400).json({
-        success: false,
-        message: 'Falta campo: adminUsername',
-      });
+      return res.status(400).json({ success: false, message: 'Falta campo: adminUsername' });
     }
-
     if (!esAdmin(adminUsername)) {
-      return res.status(403).json({
-        success: false,
-        message: 'No tienes permisos de administrador',
-      });
+      return res.status(403).json({ success: false, message: 'No tienes permisos de administrador' });
     }
 
     const negocioRef = db.collection('negocios').doc(req.params.id);
@@ -953,10 +1019,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
 
     if (accion === 'reclamar') {
       if (!tipoVip || !vipHasta) {
-        return res.status(400).json({
-          success: false,
-          message: 'Para reclamar se requiere: tipoVip, vipHasta',
-        });
+        return res.status(400).json({ success: false, message: 'Para reclamar se requiere: tipoVip, vipHasta' });
       }
       
       let propietarioFinal = propietarioUsername || adminUsername;
@@ -991,10 +1054,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
       };
     } else if (accion === 'extender') {
       if (!vipHasta) {
-        return res.status(400).json({
-          success: false,
-          message: 'Para extender se requiere: vipHasta',
-        });
+        return res.status(400).json({ success: false, message: 'Para extender se requiere: vipHasta' });
       }
       updateData = {
         ...updateData,
@@ -1002,18 +1062,12 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
       };
     } else if (accion === 'cambiar-tipo') {
       if (!tipoVip) {
-        return res.status(400).json({
-          success: false,
-          message: 'Para cambiar tipo se requiere: tipoVip',
-        });
+        return res.status(400).json({ success: false, message: 'Para cambiar tipo se requiere: tipoVip' });
       }
       
       const negocioActual = negocioDoc.data();
       if (!negocioActual.esVip) {
-        return res.status(400).json({
-          success: false,
-          message: 'El negocio no es VIP actualmente',
-        });
+        return res.status(400).json({ success: false, message: 'El negocio no es VIP actualmente' });
       }
       
       updateData = {
@@ -1021,19 +1075,16 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         tipoVip: tipoVip.toLowerCase(),
       };
     } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Acción inválida. Usa: reclamar, liberar, extender, o cambiar-tipo',
-      });
+      return res.status(400).json({ success: false, message: 'Acción inválida. Usa: reclamar, liberar, extender, o cambiar-tipo' });
     }
 
     await negocioRef.update(updateData);
 
     console.log(`✅ [ADMIN] VIP status cambiado por @${adminUsername} (${accion})`);
-    res.json({
-      success: true,
-      message: `Estado VIP actualizado (${accion})`,
-    });
+    if (accion === 'reclamar' || accion === 'liberar') {
+      dispararGeneracionPaginas('admin ' + accion + ' ' + req.params.id);   // ⭐
+    }
+    res.json({ success: true, message: `Estado VIP actualizado (${accion})` });
   } catch (error) {
     console.error('❌ Error admin al cambiar VIP status:', error);
     res.status(500).json({
@@ -1050,10 +1101,7 @@ app.get('/api/admin/verificar', async (req, res) => {
     if (!username) {
       return res.status(400).json({ success: false, message: 'Falta username' });
     }
-    res.json({
-      success: true,
-      esAdmin: esAdmin(username),
-    });
+    res.json({ success: true, esAdmin: esAdmin(username) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1126,7 +1174,6 @@ app.get('/api/negocios/:negocioId/catalogo/agrupado', async (req, res) => {
   }
 });
 
-// ⭐ NUEVO: campo 'agotado' en productoData
 app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
   console.log(`📡 POST /api/negocios/${req.params.negocioId}/catalogo`);
   try {
@@ -1151,15 +1198,16 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
     }
 
     const negocioData = negocioDoc.data();
-    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esAdminUser = esAdmin(adminUsername);
     const esPropietario = negocioData.propietarioUsername === propietarioUsername;
 
     if (!esAdminUser && !esPropietario) {
       return res.status(403).json({ success: false, message: 'Sin permisos para agregar productos' });
     }
 
-    if (!negocioData.esVip) {
-      return res.status(403).json({ success: false, message: 'Solo los negocios VIP pueden tener catálogo' });
+    // ⭐ Solo VIP vigentes pueden tener catálogo (el admin puede saltárselo)
+    if (!esAdminUser && !esVipVigente(negocioData)) {
+      return res.status(403).json({ success: false, message: 'Solo los negocios VIP vigentes pueden tener catálogo' });
     }
 
     if (!nombre || nombre.trim() === '') {
@@ -1182,6 +1230,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
     const docRef = await negocioRef.collection('catalogo').add(productoData);
     
     console.log(`✅ Producto agregado al catálogo de ${req.params.negocioId}: ${docRef.id} (${nombre})`);
+    dispararGeneracionPaginas('catalogo ' + req.params.negocioId);   // ⭐
     res.status(201).json({
       success: true,
       message: 'Producto agregado correctamente',
@@ -1197,7 +1246,6 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
   }
 });
 
-// ⭐ NUEVO: campo 'agotado' en updateData
 app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.negocioId}/catalogo/${req.params.productoId}`);
   try {
@@ -1223,11 +1271,16 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
     }
 
     const negocioData = negocioDoc.data();
-    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esAdminUser = esAdmin(adminUsername);
     const esPropietario = negocioData.propietarioUsername === propietarioUsername;
 
     if (!esAdminUser && !esPropietario) {
       return res.status(403).json({ success: false, message: 'Sin permisos para editar productos' });
+    }
+
+    // ⭐ Bloquear edición si el VIP expiró (el admin puede saltárselo)
+    if (!esAdminUser && !esVipVigente(negocioData)) {
+      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Renueva para editar el catálogo.' });
     }
 
     const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
@@ -1254,6 +1307,7 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
     await productoRef.update(updateData);
 
     console.log(`✅ Producto ${req.params.productoId} actualizado`);
+    dispararGeneracionPaginas('catalogo update ' + req.params.negocioId);   // ⭐
     res.json({ success: true, message: 'Producto actualizado correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar producto:', error);
@@ -1278,11 +1332,15 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
     }
 
     const negocioData = negocioDoc.data();
-    const esAdminUser = ADMIN_USERNAMES.includes(adminUsername);
+    const esAdminUser = esAdmin(adminUsername);
     const esPropietario = negocioData.propietarioUsername === propietarioUsername;
 
     if (!esAdminUser && !esPropietario) {
       return res.status(403).json({ success: false, message: 'Sin permisos para eliminar productos' });
+    }
+
+    if (!esAdminUser && !esVipVigente(negocioData)) {
+      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Renueva para editar el catálogo.' });
     }
 
     const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
@@ -1298,6 +1356,7 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
     });
 
     console.log(`✅ Producto ${req.params.productoId} eliminado (soft delete)`);
+    dispararGeneracionPaginas('catalogo delete ' + req.params.negocioId);   // ⭐
     res.json({ success: true, message: 'Producto eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error al eliminar producto:', error);
@@ -1351,10 +1410,7 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
     const { texto, autor, puntuacion } = req.body;
 
     if (!texto || texto.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        message: 'El texto del comentario es obligatorio'
-      });
+      return res.status(400).json({ success: false, message: 'El texto del comentario es obligatorio' });
     }
 
     const comentarioData = {
@@ -1437,10 +1493,7 @@ app.post('/api/reportes-luz', async (req, res) => {
     const { latitud, longitud, estado } = req.body;
     console.log('📝 Datos recibidos:', { latitud, longitud, estado });
     if (latitud === undefined || longitud === undefined || estado === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'Faltan campos: latitud, longitud, estado'
-      });
+      return res.status(400).json({ success: false, message: 'Faltan campos: latitud, longitud, estado' });
     }
     const reporteData = {
       latitud: parseFloat(latitud),
@@ -1483,23 +1536,24 @@ app.listen(port, () => {
   console.log(`   GET  /api/negocios (con soporte VIP)`);
   console.log(`   POST /api/negocios (con provincia + categorías) ⭐`);
   console.log(`   GET  /api/negocios/:id`);
-  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP`);
-  console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (+dispara páginas)`);
+  console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP (+dispara páginas)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
-  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
-  console.log(`   POST /api/licencias/activar     ⭐ LICENCIAS (fecha original)`);
+  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (+dispara páginas)`);
+  console.log(`   POST /api/licencias/activar     ⭐ LICENCIAS (fecha original + anti-downgrade)`);
+  console.log(`   GET  /api/licencias/vigente     ⭐ LICENCIA VIGENTE`);
   console.log(`   GET  /api/categorias ⭐`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
-  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
-  console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN`);
+  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN (+dispara páginas)`);
+  console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN (+dispara páginas)`);
   console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
   console.log(`   GET  /api/admin/verificar       ⭐ ADMIN`);
   console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
-  console.log(`   GET  /api/negocios/:id/catalogo ⭐ CATÁLOGO (ordenado en memoria)`);
-  console.log(`   GET  /api/negocios/:id/catalogo/agrupado ⭐ CATÁLOGO (ordenado en memoria)`);
-  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO (con agotado)`);
-  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (con agotado)`);
-  console.log(`   DELETE /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO`);
+  console.log(`   GET  /api/negocios/:id/catalogo ⭐ CATÁLOGO`);
+  console.log(`   GET  /api/negocios/:id/catalogo/agrupado ⭐ CATÁLOGO`);
+  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO (+dispara páginas)`);
+  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (+dispara páginas)`);
+  console.log(`   DELETE /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (+dispara páginas)`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
