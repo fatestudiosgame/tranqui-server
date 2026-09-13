@@ -652,8 +652,8 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     const t = tipoVip.toLowerCase();
     let limite = 1;
-    if (t.includes('oro')) limite = 10;
-    else if (t.includes('plata')) limite = 5;
+    if (t.includes('oro')) limite = 5;
+    else if (t.includes('plata')) limite = 3;
     else if (t.includes('bronce')) limite = 1;
     else if (t.includes('prueba')) limite = 1;
 
@@ -1472,6 +1472,175 @@ app.post('/api/reportes-luz', async (req, res) => {
   }
 });
 
+// ========== ⭐ NOTIFICACIONES PUSH (FCM) ==========
+
+// Guardar tokens de dispositivos cuando la app se registra
+app.post('/api/notificaciones/registrar-token', async (req, res) => {
+  try {
+    const { token, username } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Token requerido' });
+    }
+
+    await db.collection('dispositivos').doc(token).set({
+      token,
+      username: username || null,
+      registradoEn: admin.firestore.FieldValue.serverTimestamp(),
+      activo: true,
+    }, { merge: true });
+
+    console.log(`✅ Token FCM registrado: ${token.substring(0, 20)}...`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Error registrando token:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Enviar notificación a TODOS los dispositivos (solo admin)
+app.post('/api/notificaciones/enviar-todos', async (req, res) => {
+  try {
+    const { adminUsername, titulo, mensaje } = req.body;
+
+    if (!adminUsername || !esAdmin(adminUsername)) {
+      return res.status(403).json({ success: false, message: 'Solo administradores pueden enviar notificaciones globales' });
+    }
+
+    if (!titulo || !mensaje) {
+      return res.status(400).json({ success: false, message: 'Título y mensaje requeridos' });
+    }
+
+    // Guardar anuncio en Firestore para fallback (usuarios que abran la app sin haber recibido el push)
+    const anuncioDoc = await db.collection('anuncios').add({
+      titulo,
+      mensaje,
+      creadoEn: admin.firestore.FieldValue.serverTimestamp(),
+      activo: true,
+      enviadoPush: true,
+    });
+    console.log(`✅ Anuncio guardado en Firestore: ${anuncioDoc.id}`);
+
+    // Obtener tokens activos
+    const snapshot = await db.collection('dispositivos')
+      .where('activo', '==', true)
+      .get();
+
+    const tokens = [];
+    snapshot.forEach(doc => {
+      tokens.push(doc.data().token);
+    });
+
+    if (tokens.length === 0) {
+      return res.json({ 
+        success: true, 
+        enviados: 0, 
+        fallos: 0, 
+        total: 0, 
+        anuncioId: anuncioDoc.id,
+        mensaje: 'No hay dispositivos registrados. El anuncio se guardó para cuando abran la app.' 
+      });
+    }
+
+    console.log(`📡 Enviando push a ${tokens.length} dispositivos...`);
+
+    // Enviar en lotes de 500
+    const batchSize = 500;
+    let totalEnviados = 0;
+    let totalFallos = 0;
+
+    for (let i = 0; i < tokens.length; i += batchSize) {
+      const batch = tokens.slice(i, i + batchSize);
+      
+      const message = {
+        notification: {
+          title: titulo,
+          body: mensaje,
+        },
+        data: {
+          tipo: 'anuncio',
+          anuncioId: anuncioDoc.id,
+          timestamp: Date.now().toString(),
+        },
+        tokens: batch,
+      };
+
+      try {
+        const response = await admin.messaging().sendEachForMulticast(message);
+        totalEnviados += response.successCount;
+        totalFallos += response.failureCount;
+
+        // Limpiar tokens inválidos
+        if (response.responses) {
+          const tokensInvalidos = [];
+          response.responses.forEach((resp, idx) => {
+            if (!resp.success) {
+              const error = resp.error;
+              if (error && (error.code === 'messaging/registration-token-not-registered' || 
+                            error.code === 'messaging/invalid-registration-token')) {
+                tokensInvalidos.push(batch[idx]);
+              }
+            }
+          });
+          
+          if (tokensInvalidos.length > 0) {
+            const deleteBatch = db.batch();
+            tokensInvalidos.forEach(t => {
+              deleteBatch.delete(db.collection('dispositivos').doc(t));
+            });
+            await deleteBatch.commit();
+            console.log(`🗑️ ${tokensInvalidos.length} tokens inválidos eliminados`);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Error en lote ${Math.floor(i / batchSize) + 1}:`, error.message);
+      }
+    }
+
+    console.log(`✅ Push enviado: ${totalEnviados} exitosos, ${totalFallos} fallos`);
+    
+    res.json({ 
+      success: true, 
+      enviados: totalEnviados, 
+      fallos: totalFallos,
+      total: tokens.length,
+      anuncioId: anuncioDoc.id
+    });
+  } catch (error) {
+    console.error('❌ Error enviando notificación:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Obtener anuncios activos (fallback para usuarios que abren la app)
+app.get('/api/notificaciones/anuncios-activos', async (req, res) => {
+  try {
+    const ahora = new Date();
+    const snapshot = await db.collection('anuncios')
+      .where('activo', '==', true)
+      .orderBy('creadoEn', 'desc')
+      .limit(5)
+      .get();
+
+    const anuncios = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.expiraEn && data.expiraEn.toDate() < ahora) return;
+      
+      anuncios.push({ 
+        id: doc.id, 
+        titulo: data.titulo,
+        mensaje: data.mensaje,
+        creadoEn: data.creadoEn ? data.creadoEn.toDate().toISOString() : null,
+      });
+    });
+
+    res.json({ success: true, data: anuncios });
+  } catch (error) {
+    console.error('❌ Error obteniendo anuncios:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ========== HEALTH CHECK ==========
 
 app.get('/api/health', (req, res) => {
@@ -1511,5 +1680,8 @@ app.listen(port, () => {
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
   console.log(`   POST /api/reportes-luz`);
+  console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
+  console.log(`   POST /api/notificaciones/enviar-todos    ⭐ FCM push global (admin)`);
+  console.log(`   GET  /api/notificaciones/anuncios-activos ⭐ FCM fallback`);
   console.log(`   GET  /api/health`);
 });
