@@ -78,7 +78,7 @@ function rankPlan(plan) {
   if (t.includes('oro')) return 3;
   if (t.includes('plata')) return 2;
   if (t.includes('bronce')) return 1;
-  return 0; // prueba u otros
+  return 0;
 }
 
 function duracionDiasPlan(plan) {
@@ -112,7 +112,6 @@ async function dispararGeneracionPaginas(motivo) {
     console.log('⚠️ Sin GH_WORKFLOW_TOKEN: no se dispara el workflow de páginas');
     return;
   }
-  // Debounce: máximo 1 disparo por minuto para no quemar Actions
   const ahora = Date.now();
   if (ahora - _ultimoDisparoPaginas < 60000) {
     console.log('⏳ Disparo de páginas en debounce, ignorando (' + motivo + ')');
@@ -363,7 +362,7 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
     });
 
     console.log(`✅ Fotos actualizadas para ${req.params.id} por @${username}: ${fotos.length} foto(s)`);
-    dispararGeneracionPaginas('fotos ' + req.params.id);   // ⭐ regenerar página
+    dispararGeneracionPaginas('fotos ' + req.params.id);
     res.json({ success: true, message: 'Fotos actualizadas correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar fotos:', error);
@@ -386,7 +385,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan' });
     }
 
-    // ⭐ REGLA ANTI-DOWNGRADE: bloquear bajar de plan con licencia superior vigente
     const ahoraMs = Date.now();
     let licenciaVigente = null;
 
@@ -415,7 +413,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
-    // Buscar si ya existe activación previa de ESTA licencia
     const doc = await db.collection('licencias').doc(licencia).get();
 
     if (doc.exists) {
@@ -430,7 +427,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
-    // Primera vez: guardar fecha de activación (AHORA = fecha real de compra)
     const fechaActivacion = admin.firestore.Timestamp.now();
     await db.collection('licencias').doc(licencia).set({
       tipoPlan,
@@ -528,7 +524,6 @@ app.get('/api/categorias', async (req, res) => {
   }
 });
 
-// ⭐ ENDPOINT TEMPORAL: Poblar categorías en Firestore
 app.post('/api/admin/poblar-categorias', async (req, res) => {
   const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'TRANQUI_ADMIN_2026';
   if (req.headers['x-admin-token'] !== ADMIN_TOKEN) {
@@ -665,7 +660,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     const esMismoNegocio = idsVigentes.includes(req.params.id);
     
     if (!esMismoNegocio && negociosVigentes >= limite) {
-      return res.status(403).json({ success: false, message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Libera uno primero.` });
+      return res.status(403).json({ success: false, message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Contacta al administrador.` });
     }
 
     await negocioRef.update({
@@ -677,7 +672,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     });
 
     console.log(`✅ Negocio ${req.params.id} reclamado por @${username} (Plan: ${tipoVip})`);
-    dispararGeneracionPaginas('reclamo ' + req.params.id);   // ⭐ crear página ya
+    dispararGeneracionPaginas('reclamo ' + req.params.id);
     res.json({
       success: true,
       message: 'Negocio reclamado correctamente',
@@ -694,52 +689,8 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
   }
 });
 
-app.put('/api/negocios/:id/liberar', async (req, res) => {
-  console.log(`📡 PUT /api/negocios/${req.params.id}/liberar`);
-  try {
-    const { username } = req.body;
-
-    if (!username) {
-      return res.status(400).json({ success: false, message: 'Falta campo: username' });
-    }
-
-    const negocioRef = db.collection('negocios').doc(req.params.id);
-    const negocioDoc = await negocioRef.get();
-
-    if (!negocioDoc.exists) {
-      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
-    }
-
-    const negocioData = negocioDoc.data();
-
-    if (negocioData.propietarioUsername !== username) {
-      return res.status(403).json({ success: false, message: 'No tienes permiso para liberar este negocio' });
-    }
-
-    await negocioRef.update({
-      esVip: false,
-      tipoVip: null,
-      propietarioUsername: null,
-      vipHasta: null,
-      descripcionVip: null,
-      esNegocioPrueba: false,
-      creadoPorAdmin: null,
-      fotos: [],
-      timestampLiberacion: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    console.log(`✅ Negocio ${req.params.id} liberado por @${username}`);
-    dispararGeneracionPaginas('liberacion ' + req.params.id);   // ⭐ quitar página
-    res.json({ success: true, message: 'Negocio liberado correctamente' });
-  } catch (error) {
-    console.error('❌ Error al liberar negocio:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error al liberar negocio',
-      error: error.message
-    });
-  }
-});
+// ⭐ ELIMINADO: endpoint PUT /api/negocios/:id/liberar
+// Los dueños NO pueden liberar negocios. Solo el admin desde panel o mapa.
 
 app.put('/api/negocios/:id/vip', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/vip`);
@@ -779,7 +730,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
 
     const vipHasta = negocioData.vipHasta.toDate();
     if (vipHasta <= new Date()) {
-      return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado' });
+      return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
 
     if (categoriaPrincipal !== undefined) {
@@ -805,6 +756,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     await negocioRef.update(updateData);
 
     console.log(`✅ Negocio ${req.params.id} actualizado por @${username}`);
+    dispararGeneracionPaginas('vip-edit ' + req.params.id);
     res.json({ success: true, message: 'Negocio actualizado correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar negocio:', error);
@@ -880,6 +832,7 @@ app.put('/api/admin/negocios/:id', async (req, res) => {
     await negocioRef.update(updateData);
 
     console.log(`✅ [ADMIN] Negocio ${req.params.id} editado por @${adminUsername}`);
+    dispararGeneracionPaginas('admin-edit ' + req.params.id);
     res.json({ success: true, message: 'Negocio actualizado por administrador' });
   } catch (error) {
     console.error('❌ Error admin al actualizar:', error);
@@ -922,8 +875,8 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
     batch.delete(negocioRef);
     await batch.commit();
 
-    console.log(`✅ [ADMIN] Negocio ${req.params.id} borrado por @${adminUsername}`);
-    dispararGeneracionPaginas('borrado ' + req.params.id);   // ⭐ quitar página
+    console.log(`✅ [ADMIN] Negocio ${req.params.id} borrado permanentemente por @${adminUsername}`);
+    dispararGeneracionPaginas('borrado ' + req.params.id);
     res.json({ success: true, message: 'Negocio eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error admin al borrar:', error);
@@ -1041,6 +994,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         fotos: [],
       };
     } else if (accion === 'liberar') {
+      // ⭐ Admin libera: negocio vuelve a ser normal, la página se elimina
       updateData = {
         ...updateData,
         esVip: false,
@@ -1082,7 +1036,7 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
 
     console.log(`✅ [ADMIN] VIP status cambiado por @${adminUsername} (${accion})`);
     if (accion === 'reclamar' || accion === 'liberar') {
-      dispararGeneracionPaginas('admin ' + accion + ' ' + req.params.id);   // ⭐
+      dispararGeneracionPaginas('admin ' + accion + ' ' + req.params.id);
     }
     res.json({ success: true, message: `Estado VIP actualizado (${accion})` });
   } catch (error) {
@@ -1207,7 +1161,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
 
     // ⭐ Solo VIP vigentes pueden tener catálogo (el admin puede saltárselo)
     if (!esAdminUser && !esVipVigente(negocioData)) {
-      return res.status(403).json({ success: false, message: 'Solo los negocios VIP vigentes pueden tener catálogo' });
+      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
 
     if (!nombre || nombre.trim() === '') {
@@ -1230,7 +1184,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
     const docRef = await negocioRef.collection('catalogo').add(productoData);
     
     console.log(`✅ Producto agregado al catálogo de ${req.params.negocioId}: ${docRef.id} (${nombre})`);
-    dispararGeneracionPaginas('catalogo ' + req.params.negocioId);   // ⭐
+    dispararGeneracionPaginas('catalogo ' + req.params.negocioId);
     res.status(201).json({
       success: true,
       message: 'Producto agregado correctamente',
@@ -1280,7 +1234,7 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
 
     // ⭐ Bloquear edición si el VIP expiró (el admin puede saltárselo)
     if (!esAdminUser && !esVipVigente(negocioData)) {
-      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Renueva para editar el catálogo.' });
+      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
 
     const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
@@ -1307,7 +1261,7 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
     await productoRef.update(updateData);
 
     console.log(`✅ Producto ${req.params.productoId} actualizado`);
-    dispararGeneracionPaginas('catalogo update ' + req.params.negocioId);   // ⭐
+    dispararGeneracionPaginas('catalogo update ' + req.params.negocioId);
     res.json({ success: true, message: 'Producto actualizado correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar producto:', error);
@@ -1340,7 +1294,7 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
     }
 
     if (!esAdminUser && !esVipVigente(negocioData)) {
-      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Renueva para editar el catálogo.' });
+      return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
 
     const productoRef = negocioRef.collection('catalogo').doc(req.params.productoId);
@@ -1356,7 +1310,7 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
     });
 
     console.log(`✅ Producto ${req.params.productoId} eliminado (soft delete)`);
-    dispararGeneracionPaginas('catalogo delete ' + req.params.negocioId);   // ⭐
+    dispararGeneracionPaginas('catalogo delete ' + req.params.negocioId);
     res.json({ success: true, message: 'Producto eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error al eliminar producto:', error);
@@ -1533,27 +1487,26 @@ app.get('/api/health', (req, res) => {
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
-  console.log(`   GET  /api/negocios (con soporte VIP)`);
-  console.log(`   POST /api/negocios (con provincia + categorías) ⭐`);
+  console.log(`   GET  /api/negocios`);
+  console.log(`   POST /api/negocios`);
   console.log(`   GET  /api/negocios/:id`);
-  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (+dispara páginas)`);
-  console.log(`   PUT  /api/negocios/:id/liberar  ⭐ VIP (+dispara páginas)`);
-  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP (+ categorías)`);
-  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (+dispara páginas)`);
-  console.log(`   POST /api/licencias/activar     ⭐ LICENCIAS (fecha original + anti-downgrade)`);
-  console.log(`   GET  /api/licencias/vigente     ⭐ LICENCIA VIGENTE`);
-  console.log(`   GET  /api/categorias ⭐`);
-  console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN`);
-  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN (+dispara páginas)`);
-  console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN (+dispara páginas)`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
+  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
+  console.log(`   POST /api/licencias/activar`);
+  console.log(`   GET  /api/licencias/vigente`);
+  console.log(`   GET  /api/categorias`);
+  console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
+  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN (reclamar/liberar/extender/cambiar-tipo)`);
+  console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN borrado total`);
   console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
   console.log(`   GET  /api/admin/verificar       ⭐ ADMIN`);
-  console.log(`   POST /api/admin/poblar-categorias (temporal) ⚠️`);
-  console.log(`   GET  /api/negocios/:id/catalogo ⭐ CATÁLOGO`);
-  console.log(`   GET  /api/negocios/:id/catalogo/agrupado ⭐ CATÁLOGO`);
-  console.log(`   POST /api/negocios/:id/catalogo ⭐ CATÁLOGO (+dispara páginas)`);
-  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (+dispara páginas)`);
-  console.log(`   DELETE /api/negocios/:id/catalogo/:productoId ⭐ CATÁLOGO (+dispara páginas)`);
+  console.log(`   POST /api/admin/poblar-categorias`);
+  console.log(`   GET  /api/negocios/:id/catalogo`);
+  console.log(`   GET  /api/negocios/:id/catalogo/agrupado`);
+  console.log(`   POST /api/negocios/:id/catalogo`);
+  console.log(`   PUT  /api/negocios/:id/catalogo/:productoId`);
+  console.log(`   DELETE /api/negocios/:id/catalogo/:productoId`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
   console.log(`   GET  /api/reportes-luz`);
