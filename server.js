@@ -234,8 +234,9 @@ app.post('/api/negocios', async (req, res) => {
       municipio,
       categoriaPrincipal,
       categoriasSecundarias,
+      agregadoPor,
     } = req.body;
-    console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal });
+    console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor });
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
@@ -254,6 +255,29 @@ app.post('/api/negocios', async (req, res) => {
     if (!validacion.valido) {
       return res.status(400).json({ success: false, message: validacion.error });
     }
+
+    // ⭐ ANTI-FRAUDE RUTA TRANQUI: Límite de 3 negocios por día
+    if (agregadoPor) {
+      const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
+      const perfilDoc = await perfilRef.get();
+      
+      if (perfilDoc.exists) {
+        const perfilData = perfilDoc.data();
+        const diaActual = obtenerDiaActual();
+        
+        if (perfilData.fechaUltimoNegocioAgregado) {
+          const fechaUltimo = perfilData.fechaUltimoNegocioAgregado.toDate();
+          const diaUltimo = `${fechaUltimo.getFullYear()}-${String(fechaUltimo.getMonth() + 1).padStart(2, '0')}-${String(fechaUltimo.getDate()).padStart(2, '0')}`;
+          
+          if (diaUltimo === diaActual && (perfilData.negociosAgregadosHoy || 0) >= LIMITE_NEGOCIOS_POR_DIA) {
+            return res.status(403).json({
+              success: false,
+              message: `Alcanzaste el límite de ${LIMITE_NEGOCIOS_POR_DIA} negocios agregados por hoy. ¡Vuelve mañana!`,
+            });
+          }
+        }
+      }
+    }
     
     const negocioData = {
       nombre: nombre.trim(),
@@ -266,11 +290,48 @@ app.post('/api/negocios', async (req, res) => {
       categoriasSecundarias: categoriasSecundarias || [],
       esVip: false,
       fotos: [],
+      agregadoPor: agregadoPor || 'desconocido',
+      verificado: false,
+      checkinsUnicos: 0,
+      totalCheckins: 0,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
     
     const docRef = await db.collection('negocios').add(negocioData);
-    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio}) [Categoría: ${categoriaPrincipal}]`);
+
+    // ⭐ Actualizar contador de negocios agregados por el usuario
+    if (agregadoPor) {
+      const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
+      const perfilDoc = await perfilRef.get();
+      const diaActual = obtenerDiaActual();
+      
+      if (perfilDoc.exists) {
+        const perfilData = perfilDoc.data();
+        const fechaUltimo = perfilData.fechaUltimoNegocioAgregado
+          ? perfilData.fechaUltimoNegocioAgregado.toDate()
+          : null;
+        
+        let nuevoContador = (perfilData.negociosAgregadosHoy || 0) + 1;
+        if (fechaUltimo) {
+          const diaUltimo = `${fechaUltimo.getFullYear()}-${String(fechaUltimo.getMonth() + 1).padStart(2, '0')}-${String(fechaUltimo.getDate()).padStart(2, '0')}`;
+          if (diaUltimo !== diaActual) {
+            nuevoContador = 1;
+          }
+        }
+        
+        await perfilRef.update({
+          negociosAgregadosHoy: nuevoContador,
+          fechaUltimoNegocioAgregado: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        await perfilRef.set({
+          negociosAgregadosHoy: 1,
+          fechaUltimoNegocioAgregado: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    }
+
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio}) [Categoría: ${categoriaPrincipal}] [Por: ${agregadoPor || 'desconocido'}]`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -1408,7 +1469,6 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
   }
 });
 
-// ⭐ NUEVO: BORRAR COMENTARIOS (Admin o Propietario)
 app.delete('/api/comentarios/:negocioId/:comentarioId', async (req, res) => {
   console.log(`📡 DELETE /api/comentarios/${req.params.negocioId}/${req.params.comentarioId}`);
   try {
@@ -1439,10 +1499,8 @@ app.delete('/api/comentarios/:negocioId/:comentarioId', async (req, res) => {
     const comentarioData = comentarioDoc.data();
     const puntuacionEliminada = comentarioData.puntuacion || 0;
 
-    // Eliminar el comentario
     await comentarioRef.delete();
 
-    // Recalcular estadísticas del negocio
     const totalComentarios = Math.max(0, (negocioData.totalComentarios || 0) - 1);
     let totalPuntuaciones = negocioData.totalPuntuaciones || 0;
     let sumaPuntuaciones = negocioData.sumaPuntuaciones || 0;
@@ -1693,6 +1751,540 @@ app.get('/api/notificaciones/anuncios-activos', async (req, res) => {
   }
 });
 
+// =========================================================
+// ⭐ RUTA TRANQUI - SISTEMA DE GAMIFICACIÓN
+// =========================================================
+
+const PUNTOS_POR_TIPO = {
+  normal: 10,
+  verificado: 15,
+  bronce: 20,
+  bronceplus: 20,
+  plata: 30,
+  plataplus: 30,
+  oro: 40,
+  oroplus: 40,
+};
+
+const NIVELES = [
+  { nivel: 1, nombre: 'Aprendiz', puntos: 0 },
+  { nivel: 2, nombre: 'Caminante', puntos: 100 },
+  { nivel: 3, nombre: 'Explorador', puntos: 300 },
+  { nivel: 4, nombre: 'Conocedor', puntos: 700 },
+  { nivel: 5, nombre: 'Experto Local', puntos: 1500 },
+  { nivel: 6, nombre: 'Leyenda', puntos: 3000 },
+  { nivel: 7, nombre: 'Maestro Tranqui', puntos: 6000 },
+];
+
+const INSIGNIAS = {
+  primer_paso: { nombre: 'Primer paso', emoji: '🚶', categoria: 'exploracion', descripcion: 'Tu primer check-in' },
+  catador: { nombre: 'Catador', emoji: '☕', categoria: 'exploracion', descripcion: '5 cafeterías visitadas' },
+  foodie: { nombre: 'Foodie', emoji: '🍔', categoria: 'exploracion', descripcion: '10 restaurantes visitados' },
+  noctambulo: { nombre: 'Noctámbulo', emoji: '🌃', categoria: 'exploracion', descripcion: '3 bares después de las 8pm' },
+  turista_local: { nombre: 'Turista local', emoji: '🏘️', categoria: 'exploracion', descripcion: 'Visitas en 5 municipios distintos' },
+  provincial: { nombre: 'Provincial', emoji: '🗺️', categoria: 'exploracion', descripcion: 'Visitas en 3 provincias distintas' },
+  coleccionista: { nombre: 'Coleccionista', emoji: '🎯', categoria: 'exploracion', descripcion: '50 negocios únicos visitados' },
+  centurion: { nombre: 'Centurión', emoji: '🌟', categoria: 'exploracion', descripcion: '100 negocios únicos visitados' },
+  racha_inicial: { nombre: 'Racha inicial', emoji: '⚡', categoria: 'constancia', descripcion: 'Streak de 3 días' },
+  en_llamas: { nombre: 'En llamas', emoji: '🔥', categoria: 'constancia', descripcion: 'Streak de 7 días' },
+  imparable: { nombre: 'Imparable', emoji: '💪', categoria: 'constancia', descripcion: 'Streak de 15 días' },
+  adicto_tranqui: { nombre: 'Adicto Tranqui', emoji: '🏅', categoria: 'constancia', descripcion: 'Streak de 30 días' },
+  campeon_mensual: { nombre: 'Campeón Mensual', emoji: '🏆', categoria: 'especial', descripcion: 'Fuiste #1 en el ranking mensual' },
+};
+
+const LIMITE_NEGOCIOS_POR_DIA = 3;
+const LIMITE_CHECKINS_POR_DIA = 10;
+const COOLDOWN_NEGOCIO_HORAS = 24;
+const RADIO_VALIDO_METROS = 50;
+const CHECKINS_PARA_VERIFICAR = 3;
+
+function obtenerTipoNegocioParaPuntos(negocioData) {
+  if (negocioData.esVip && negocioData.tipoVip) {
+    return negocioData.tipoVip.toLowerCase();
+  }
+  if (negocioData.verificado === true) {
+    return 'verificado';
+  }
+  return 'normal';
+}
+
+function calcularPuntosCheckin(negocioData, streakActual) {
+  const tipo = obtenerTipoNegocioParaPuntos(negocioData);
+  let puntos = PUNTOS_POR_TIPO[tipo] || 10;
+
+  if (streakActual >= 15) puntos += 10;
+  else if (streakActual >= 7) puntos += 5;
+  else if (streakActual >= 3) puntos += 2;
+
+  return { puntos, tipo };
+}
+
+function calcularNivel(puntosTotales) {
+  let nivelActual = NIVELES[0];
+  for (const n of NIVELES) {
+    if (puntosTotales >= n.puntos) {
+      nivelActual = n;
+    }
+  }
+  return nivelActual.nivel;
+}
+
+function obtenerMesActual() {
+  const ahora = new Date();
+  const anio = ahora.getFullYear();
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+  return `${anio}-${mes}`;
+}
+
+function obtenerDiaActual() {
+  const ahora = new Date();
+  const anio = ahora.getFullYear();
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+  const dia = String(ahora.getDate()).padStart(2, '0');
+  return `${anio}-${mes}-${dia}`;
+}
+
+async function actualizarPerfilMes(perfilRef, perfilData) {
+  const mesActual = obtenerMesActual();
+  if (perfilData.mesActual !== mesActual) {
+    await perfilRef.update({
+      puntosMesActual: 0,
+      mesActual: mesActual,
+    });
+    return { ...perfilData, puntosMesActual: 0, mesActual: mesActual };
+  }
+  return perfilData;
+}
+
+async function detectarInsignias(perfilRef, perfilData, checkins) {
+  const insigniasActuales = perfilData.insignias || [];
+  const nuevasInsignias = [];
+
+  const totalCheckins = perfilData.totalCheckins || 0;
+  const negociosVisitados = perfilData.negociosVisitados || 0;
+  const streak = perfilData.streakActual || 0;
+
+  if (totalCheckins >= 1 && !insigniasActuales.includes('primer_paso')) {
+    nuevasInsignias.push('primer_paso');
+  }
+  if (negociosVisitados >= 50 && !insigniasActuales.includes('coleccionista')) {
+    nuevasInsignias.push('coleccionista');
+  }
+  if (negociosVisitados >= 100 && !insigniasActuales.includes('centurion')) {
+    nuevasInsignias.push('centurion');
+  }
+
+  if (streak >= 3 && !insigniasActuales.includes('racha_inicial')) {
+    nuevasInsignias.push('racha_inicial');
+  }
+  if (streak >= 7 && !insigniasActuales.includes('en_llamas')) {
+    nuevasInsignias.push('en_llamas');
+  }
+  if (streak >= 15 && !insigniasActuales.includes('imparable')) {
+    nuevasInsignias.push('imparable');
+  }
+  if (streak >= 30 && !insigniasActuales.includes('adicto_tranqui')) {
+    nuevasInsignias.push('adicto_tranqui');
+  }
+
+  try {
+    const categoriasVisitadas = {};
+    const municipiosVisitados = new Set();
+    const provinciasVisitadas = new Set();
+    let baresNocturnos = 0;
+    let cafeterias = 0;
+    let restaurantes = 0;
+
+    for (const checkin of checkins) {
+      const negocioRef = db.collection('negocios').doc(checkin.negocioId);
+      const negocioDoc = await negocioRef.get();
+      if (!negocioDoc.exists) continue;
+      const nd = negocioDoc.data();
+
+      const cat = nd.categoriaPrincipal || 'otros';
+      categoriasVisitadas[cat] = (categoriasVisitadas[cat] || 0) + 1;
+
+      if (nd.municipio) municipiosVisitados.add(nd.municipio);
+      if (nd.provincia) provinciasVisitadas.add(nd.provincia);
+
+      if (cat === 'cafeteria') cafeterias++;
+      if (cat === 'restaurante') restaurantes++;
+      if (cat === 'bar') {
+        const hora = checkin.timestamp.toDate().getHours();
+        if (hora >= 20) baresNocturnos++;
+      }
+    }
+
+    if (cafeterias >= 5 && !insigniasActuales.includes('catador')) {
+      nuevasInsignias.push('catador');
+    }
+    if (restaurantes >= 10 && !insigniasActuales.includes('foodie')) {
+      nuevasInsignias.push('foodie');
+    }
+    if (baresNocturnos >= 3 && !insigniasActuales.includes('noctambulo')) {
+      nuevasInsignias.push('noctambulo');
+    }
+    if (municipiosVisitados.size >= 5 && !insigniasActuales.includes('turista_local')) {
+      nuevasInsignias.push('turista_local');
+    }
+    if (provinciasVisitadas.size >= 3 && !insigniasActuales.includes('provincial')) {
+      nuevasInsignias.push('provincial');
+    }
+  } catch (e) {
+    console.error('⚠️ Error detectando insignias de categoría:', e.message);
+  }
+
+  if (nuevasInsignias.length > 0) {
+    const todas = [...insigniasActuales, ...nuevasInsignias];
+    await perfilRef.update({ insignias: todas });
+  }
+
+  return nuevasInsignias;
+}
+
+function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+app.post('/api/ruta-tranqui/checkin', async (req, res) => {
+  try {
+    const { username, negocioId, latitud, longitud } = req.body;
+
+    if (!username || !negocioId) {
+      return res.status(400).json({ success: false, message: 'Faltan campos: username, negocioId' });
+    }
+
+    const negocioRef = db.collection('negocios').doc(negocioId);
+    const negocioDoc = await negocioRef.get();
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+    const negocioData = negocioDoc.data();
+
+    if (latitud === undefined || longitud === undefined) {
+      return res.status(400).json({ success: false, message: 'Se requiere ubicación GPS' });
+    }
+    if (negocioData.latitud && negocioData.longitud) {
+      const distancia = calcularDistanciaMetros(
+        latitud, longitud,
+        negocioData.latitud, negocioData.longitud
+      );
+      if (distancia > RADIO_VALIDO_METROS) {
+        return res.status(403).json({
+          success: false,
+          message: `Estás demasiado lejos del negocio (${Math.round(distancia)}m). Acércate más.`,
+        });
+      }
+    }
+
+    if (negocioData.propietarioUsername === username) {
+      return res.status(403).json({ success: false, message: 'No puedes hacer check-in en tu propio negocio' });
+    }
+    if (negocioData.agregadoPor === username) {
+      return res.status(403).json({ success: false, message: 'No puedes ganar puntos en un negocio que tú agregaste' });
+    }
+
+    const perfilRef = db.collection('perfiles_usuarios').doc(username);
+    let perfilDoc = await perfilRef.get();
+    let perfilData;
+
+    if (!perfilDoc.exists) {
+      perfilData = {
+        puntosTotales: 0,
+        puntosMesActual: 0,
+        mesActual: obtenerMesActual(),
+        nivel: 1,
+        streakActual: 0,
+        ultimoCheckIn: null,
+        ultimoDiaCheckin: null,
+        negociosVisitados: 0,
+        totalCheckins: 0,
+        negociosAgregadosHoy: 0,
+        fechaUltimoNegocioAgregado: null,
+        fechaRegistro: admin.firestore.FieldValue.serverTimestamp(),
+        insignias: [],
+      };
+      await perfilRef.set(perfilData);
+    } else {
+      perfilData = perfilDoc.data();
+      perfilData = await actualizarPerfilMes(perfilRef, perfilData);
+    }
+
+    const diaActual = obtenerDiaActual();
+    if (perfilData.ultimoDiaCheckin === diaActual) {
+      const inicioDia = new Date();
+      inicioDia.setHours(0, 0, 0, 0);
+      const checkinsHoy = await perfilRef.collection('checkins')
+        .where('timestamp', '>=', inicioDia)
+        .get();
+      if (checkinsHoy.size >= LIMITE_CHECKINS_POR_DIA) {
+        return res.status(403).json({
+          success: false,
+          message: `Alcanzaste el límite de ${LIMITE_CHECKINS_POR_DIA} check-ins por hoy. ¡Vuelve mañana!`,
+        });
+      }
+    }
+
+    const ultimoCheckinNegocio = await perfilRef.collection('checkins')
+      .where('negocioId', '==', negocioId)
+      .orderBy('timestamp', 'desc')
+      .limit(1)
+      .get();
+
+    if (!ultimoCheckinNegocio.empty) {
+      const ultimoCheckin = ultimoCheckinNegocio.docs[0].data();
+      const horasDesdeUltimo = (Date.now() - ultimoCheckin.timestamp.toDate().getTime()) / (1000 * 60 * 60);
+      if (horasDesdeUltimo < COOLDOWN_NEGOCIO_HORAS) {
+        return res.status(403).json({
+          success: false,
+          message: `Ya hiciste check-in aquí hoy. Vuelve en ${Math.ceil(COOLDOWN_NEGOCIO_HORAS - horasDesdeUltimo)} horas.`,
+        });
+      }
+    }
+
+    let nuevoStreak;
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+    const ayerStr = `${ayer.getFullYear()}-${String(ayer.getMonth() + 1).padStart(2, '0')}-${String(ayer.getDate()).padStart(2, '0')}`;
+
+    if (perfilData.ultimoDiaCheckin === diaActual) {
+      nuevoStreak = perfilData.streakActual || 1;
+    } else if (perfilData.ultimoDiaCheckin === ayerStr) {
+      nuevoStreak = (perfilData.streakActual || 0) + 1;
+    } else {
+      nuevoStreak = 1;
+    }
+
+    const { puntos, tipo } = calcularPuntosCheckin(negocioData, nuevoStreak);
+
+    const nuevosPuntosTotales = (perfilData.puntosTotales || 0) + puntos;
+    const nuevosPuntosMes = (perfilData.puntosMesActual || 0) + puntos;
+    const nuevoNivel = calcularNivel(nuevosPuntosTotales);
+
+    const yaVisitoNegocio = await perfilRef.collection('checkins')
+      .where('negocioId', '==', negocioId)
+      .limit(1)
+      .get();
+    const esNegocioNuevo = yaVisitoNegocio.empty;
+
+    await perfilRef.update({
+      puntosTotales: nuevosPuntosTotales,
+      puntosMesActual: nuevosPuntosMes,
+      mesActual: obtenerMesActual(),
+      nivel: nuevoNivel,
+      streakActual: nuevoStreak,
+      ultimoCheckIn: admin.firestore.FieldValue.serverTimestamp(),
+      ultimoDiaCheckin: diaActual,
+      negociosVisitados: esNegocioNuevo ? (perfilData.negociosVisitados || 0) + 1 : perfilData.negociosVisitados,
+      totalCheckins: (perfilData.totalCheckins || 0) + 1,
+    });
+
+    await perfilRef.collection('checkins').add({
+      negocioId: negocioId,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      puntosGanados: puntos,
+      distancia: latitud && longitud && negocioData.latitud && negocioData.longitud
+        ? calcularDistanciaMetros(latitud, longitud, negocioData.latitud, negocioData.longitud)
+        : 0,
+      tipoNegocio: tipo,
+    });
+
+    const negocioAntesVerificado = negocioData.verificado === true;
+    const checkinsUnicosActuales = negocioData.checkinsUnicos || 0;
+
+    let nuevosCheckinsUnicos = checkinsUnicosActuales;
+    if (esNegocioNuevo) {
+      nuevosCheckinsUnicos = checkinsUnicosActuales + 1;
+    }
+
+    const ahoraVerificado = nuevosCheckinsUnicos >= CHECKINS_PARA_VERIFICAR;
+
+    await negocioRef.update({
+      checkinsUnicos: nuevosCheckinsUnicos,
+      totalCheckins: (negocioData.totalCheckins || 0) + 1,
+      verificado: ahoraVerificado,
+    });
+
+    const checkinsRecientes = await perfilRef.collection('checkins')
+      .orderBy('timestamp', 'desc')
+      .limit(150)
+      .get();
+    const checkinsList = checkinsRecientes.docs.map(d => d.data());
+    const nuevasInsignias = await detectarInsignias(perfilRef, {
+      ...perfilData,
+      totalCheckins: (perfilData.totalCheckins || 0) + 1,
+      negociosVisitados: esNegocioNuevo ? (perfilData.negociosVisitados || 0) + 1 : perfilData.negociosVisitados,
+      streakActual: nuevoStreak,
+      insignias: perfilData.insignias || [],
+    }, checkinsList);
+
+    res.json({
+      success: true,
+      puntosGanados: puntos,
+      tipoNegocio: tipo,
+      puntosTotales: nuevosPuntosTotales,
+      puntosMesActual: nuevosPuntosMes,
+      nivel: nuevoNivel,
+      streakActual: nuevoStreak,
+      negocioVerificadoAhora: ahoraVerificado && !negocioAntesVerificado,
+      insigniasNuevas: nuevasInsignias.map(id => ({ id, ...INSIGNIAS[id] })),
+      mensaje: `¡+${puntos} puntos! ${ahoraVerificado && !negocioAntesVerificado ? '¡Este negocio ahora está VERIFICADO!' : ''}`,
+    });
+
+  } catch (error) {
+    console.error('❌ Error en check-in:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/ruta-tranqui/perfil', async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Falta username' });
+    }
+
+    const perfilRef = db.collection('perfiles_usuarios').doc(username);
+    let perfilDoc = await perfilRef.get();
+
+    if (!perfilDoc.exists) {
+      return res.json({
+        success: true,
+        data: {
+          puntosTotales: 0,
+          puntosMesActual: 0,
+          nivel: 1,
+          nivelNombre: 'Aprendiz',
+          streakActual: 0,
+          negociosVisitados: 0,
+          totalCheckins: 0,
+          insignias: [],
+          puntosParaSiguienteNivel: 100,
+        },
+      });
+    }
+
+    let perfilData = perfilDoc.data();
+    perfilData = await actualizarPerfilMes(perfilRef, perfilData);
+
+    const nivelActual = NIVELES.find(n => n.nivel === perfilData.nivel) || NIVELES[0];
+    const siguienteNivel = NIVELES.find(n => n.nivel === perfilData.nivel + 1);
+    const puntosParaSiguiente = siguienteNivel
+      ? siguienteNivel.puntos - perfilData.puntosTotales
+      : 0;
+
+    res.json({
+      success: true,
+      data: {
+        ...perfilData,
+        nivelNombre: nivelActual.nombre,
+        puntosParaSiguienteNivel: puntosParaSiguiente > 0 ? puntosParaSiguiente : 0,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error obteniendo perfil:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/ruta-tranqui/ranking', async (req, res) => {
+  try {
+    const mesActual = obtenerMesActual();
+
+    const snapshot = await db.collection('perfiles_usuarios')
+      .orderBy('puntosMesActual', 'desc')
+      .limit(50)
+      .get();
+
+    const ranking = [];
+    snapshot.forEach((doc, index) => {
+      const data = doc.data();
+      ranking.push({
+        posicion: index + 1,
+        username: doc.id,
+        puntosMesActual: data.puntosMesActual || 0,
+        puntosTotales: data.puntosTotales || 0,
+        nivel: data.nivel || 1,
+        streakActual: data.streakActual || 0,
+      });
+    });
+
+    res.json({
+      success: true,
+      mes: mesActual,
+      data: ranking,
+      premio: '120 CUP al #1 del mes',
+    });
+  } catch (error) {
+    console.error('❌ Error obteniendo ranking:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/ruta-tranqui/insignias', async (req, res) => {
+  try {
+    const { username } = req.query;
+
+    let insigniasUsuario = [];
+    if (username) {
+      const perfilDoc = await db.collection('perfiles_usuarios').doc(username).get();
+      if (perfilDoc.exists) {
+        insigniasUsuario = perfilDoc.data().insignias || [];
+      }
+    }
+
+    const todasInsignias = Object.entries(INSIGNIAS).map(([id, data]) => ({
+      id,
+      ...data,
+      desbloqueada: insigniasUsuario.includes(id),
+    }));
+
+    res.json({ success: true, data: todasInsignias });
+  } catch (error) {
+    console.error('❌ Error obteniendo insignias:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/ruta-tranqui/reset-mensual', async (req, res) => {
+  try {
+    const { adminUsername } = req.body;
+    if (!adminUsername || !esAdmin(adminUsername)) {
+      return res.status(403).json({ success: false, message: 'Solo administradores pueden resetear el ranking' });
+    }
+
+    const mesActual = obtenerMesActual();
+    const snapshot = await db.collection('perfiles_usuarios').get();
+
+    const batch = db.batch();
+    let contador = 0;
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.mesActual !== mesActual) {
+        batch.update(doc.ref, {
+          puntosMesActual: 0,
+          mesActual: mesActual,
+        });
+        contador++;
+      }
+    });
+    await batch.commit();
+
+    console.log(`✅ [ADMIN] Reset mensual: ${contador} perfiles actualizados a ${mesActual}`);
+    res.json({ success: true, message: `Reset mensual completado: ${contador} perfiles actualizados` });
+  } catch (error) {
+    console.error('❌ Error en reset mensual:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ========== HEALTH CHECK ==========
 
 app.get('/api/health', (req, res) => {
@@ -1736,5 +2328,10 @@ app.listen(port, () => {
   console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
   console.log(`   POST /api/notificaciones/enviar-todos    ⭐ FCM push global (admin)`);
   console.log(`   GET  /api/notificaciones/anuncios-activos ⭐ FCM fallback`);
+  console.log(`   POST /api/ruta-tranqui/checkin        ⭐ GAMIFICACIÓN check-in`);
+  console.log(`   GET  /api/ruta-tranqui/perfil         ⭐ GAMIFICACIÓN perfil`);
+  console.log(`   GET  /api/ruta-tranqui/ranking        ⭐ GAMIFICACIÓN ranking`);
+  console.log(`   GET  /api/ruta-tranqui/insignias      ⭐ GAMIFICACIÓN insignias`);
+  console.log(`   POST /api/ruta-tranqui/reset-mensual  ⭐ GAMIFICACIÓN reset (admin)`);
   console.log(`   GET  /api/health`);
 });
