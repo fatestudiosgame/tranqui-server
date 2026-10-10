@@ -689,9 +689,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
   }
 });
 
-// ⭐ ELIMINADO: endpoint PUT /api/negocios/:id/liberar
-// Los dueños NO pueden liberar negocios. Solo el admin desde panel o mapa.
-
 app.put('/api/negocios/:id/vip', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/vip`);
   try {
@@ -994,7 +991,6 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         fotos: [],
       };
     } else if (accion === 'liberar') {
-      // ⭐ Admin libera: negocio vuelve a ser normal, la página se elimina
       updateData = {
         ...updateData,
         esVip: false,
@@ -1159,7 +1155,6 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Sin permisos para agregar productos' });
     }
 
-    // ⭐ Solo VIP vigentes pueden tener catálogo (el admin puede saltárselo)
     if (!esAdminUser && !esVipVigente(negocioData)) {
       return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
@@ -1232,7 +1227,6 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Sin permisos para editar productos' });
     }
 
-    // ⭐ Bloquear edición si el VIP expiró (el admin puede saltárselo)
     if (!esAdminUser && !esVipVigente(negocioData)) {
       return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
@@ -1414,6 +1408,71 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
   }
 });
 
+// ⭐ NUEVO: BORRAR COMENTARIOS (Admin o Propietario)
+app.delete('/api/comentarios/:negocioId/:comentarioId', async (req, res) => {
+  console.log(`📡 DELETE /api/comentarios/${req.params.negocioId}/${req.params.comentarioId}`);
+  try {
+    const { username, adminUsername } = req.body; 
+    
+    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
+    const negocioDoc = await negocioRef.get();
+
+    if (!negocioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+
+    const negocioData = negocioDoc.data();
+    const esAdminUser = adminUsername && esAdmin(adminUsername);
+    const esPropietario = username && negocioData.propietarioUsername === username;
+
+    if (!esAdminUser && !esPropietario) {
+      return res.status(403).json({ success: false, message: 'Sin permisos para eliminar este comentario' });
+    }
+
+    const comentarioRef = negocioRef.collection('comentarios').doc(req.params.comentarioId);
+    const comentarioDoc = await comentarioRef.get();
+
+    if (!comentarioDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Comentario no encontrado' });
+    }
+
+    const comentarioData = comentarioDoc.data();
+    const puntuacionEliminada = comentarioData.puntuacion || 0;
+
+    // Eliminar el comentario
+    await comentarioRef.delete();
+
+    // Recalcular estadísticas del negocio
+    const totalComentarios = Math.max(0, (negocioData.totalComentarios || 0) - 1);
+    let totalPuntuaciones = negocioData.totalPuntuaciones || 0;
+    let sumaPuntuaciones = negocioData.sumaPuntuaciones || 0;
+
+    if (puntuacionEliminada > 0) {
+      totalPuntuaciones = Math.max(0, totalPuntuaciones - 1);
+      sumaPuntuaciones = Math.max(0, sumaPuntuaciones - puntuacionEliminada);
+    }
+
+    const promedioPuntuacion = totalPuntuaciones > 0 ? sumaPuntuaciones / totalPuntuaciones : null;
+
+    await negocioRef.update({
+      totalComentarios,
+      totalPuntuaciones,
+      sumaPuntuaciones,
+      promedioPuntuacion,
+    });
+
+    console.log(`✅ Comentario ${req.params.comentarioId} eliminado por ${esAdminUser ? 'Admin ' + adminUsername : 'Dueño ' + username}`);
+    res.json({ success: true, message: 'Comentario eliminado correctamente' });
+  } catch (error) {
+    console.error('❌ Error al eliminar comentario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar comentario',
+      error: error.message
+    });
+  }
+});
+
 // ========== RUTAS PARA REPORTES DE LUZ ==========
 
 app.get('/api/reportes-luz', async (req, res) => {
@@ -1474,7 +1533,6 @@ app.post('/api/reportes-luz', async (req, res) => {
 
 // ========== ⭐ NOTIFICACIONES PUSH (FCM) ==========
 
-// Guardar tokens de dispositivos cuando la app se registra
 app.post('/api/notificaciones/registrar-token', async (req, res) => {
   try {
     const { token, username } = req.body;
@@ -1497,7 +1555,6 @@ app.post('/api/notificaciones/registrar-token', async (req, res) => {
   }
 });
 
-// Enviar notificación a TODOS los dispositivos (solo admin)
 app.post('/api/notificaciones/enviar-todos', async (req, res) => {
   try {
     const { adminUsername, titulo, mensaje } = req.body;
@@ -1510,7 +1567,6 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Título y mensaje requeridos' });
     }
 
-    // Guardar anuncio en Firestore para fallback (usuarios que abran la app sin haber recibido el push)
     const anuncioDoc = await db.collection('anuncios').add({
       titulo,
       mensaje,
@@ -1520,7 +1576,6 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
     });
     console.log(`✅ Anuncio guardado en Firestore: ${anuncioDoc.id}`);
 
-    // Obtener tokens activos
     const snapshot = await db.collection('dispositivos')
       .where('activo', '==', true)
       .get();
@@ -1543,7 +1598,6 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
 
     console.log(`📡 Enviando push a ${tokens.length} dispositivos...`);
 
-    // Enviar en lotes de 500
     const batchSize = 500;
     let totalEnviados = 0;
     let totalFallos = 0;
@@ -1569,7 +1623,6 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
         totalEnviados += response.successCount;
         totalFallos += response.failureCount;
 
-        // Limpiar tokens inválidos
         if (response.responses) {
           const tokensInvalidos = [];
           response.responses.forEach((resp, idx) => {
@@ -1611,7 +1664,6 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
   }
 });
 
-// Obtener anuncios activos (fallback para usuarios que abren la app)
 app.get('/api/notificaciones/anuncios-activos', async (req, res) => {
   try {
     const ahora = new Date();
@@ -1678,6 +1730,7 @@ app.listen(port, () => {
   console.log(`   DELETE /api/negocios/:id/catalogo/:productoId`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
+  console.log(`   DELETE /api/comentarios/:negocioId/:comentarioId ⭐ BORRAR COMENTARIO (Admin/Dueño)`);
   console.log(`   GET  /api/reportes-luz`);
   console.log(`   POST /api/reportes-luz`);
   console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
