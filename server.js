@@ -1790,6 +1790,7 @@ const INSIGNIAS = {
   imparable: { nombre: 'Imparable', emoji: '💪', categoria: 'constancia', descripcion: 'Streak de 15 días' },
   adicto_tranqui: { nombre: 'Adicto Tranqui', emoji: '🏅', categoria: 'constancia', descripcion: 'Streak de 30 días' },
   campeon_mensual: { nombre: 'Campeón Mensual', emoji: '🏆', categoria: 'especial', descripcion: 'Fuiste #1 en el ranking mensual' },
+  usuario_apklis: { nombre: 'Usuario Apklis', emoji: '🇨🇺', categoria: 'especial', descripcion: 'Te uniste a la Ruta Tranqui con Apklis' },
 };
 
 const LIMITE_NEGOCIOS_POR_DIA = 3;
@@ -2253,6 +2254,83 @@ app.get('/api/ruta-tranqui/insignias', async (req, res) => {
   }
 });
 
+// =========================================================
+// ⭐ RUTA TRANQUI - REGISTRO CON APKLIS (Opción D)
+// =========================================================
+app.post('/api/ruta-tranqui/registrar-con-apklis', async (req, res) => {
+  try {
+    const { apklisUsername } = req.body;
+
+    if (!apklisUsername || typeof apklisUsername !== 'string') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Se requiere apklisUsername válido' 
+      });
+    }
+
+    // Validar formato (solo letras, números, guión bajo, 3-30 caracteres)
+    const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
+    if (!usernameRegex.test(apklisUsername)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Username de Apklis inválido' 
+      });
+    }
+
+    const perfilRef = db.collection('perfiles_usuarios').doc(apklisUsername);
+    const perfilDoc = await perfilRef.get();
+
+    if (perfilDoc.exists) {
+      // Ya existe, solo devolver datos (sin dar bonus otra vez)
+      const perfilData = perfilDoc.data();
+      console.log(`✅ [Ruta Tranqui] Usuario existente: @${apklisUsername}`);
+      return res.json({
+        success: true,
+        username: apklisUsername,
+        esNuevoUsuario: false,
+        puntosTotales: perfilData.puntosTotales || 0,
+        puntosBonus: 0,
+      });
+    }
+
+    // ⭐ NUEVO USUARIO: Crear perfil con bonus de bienvenida
+    const BONUS_BIENVENIDA = 50;
+    const mesActual = obtenerMesActual();
+    
+    const perfilInicial = {
+      puntosTotales: BONUS_BIENVENIDA,
+      puntosMesActual: BONUS_BIENVENIDA,
+      mesActual: mesActual,
+      nivel: 1,
+      streakActual: 0,
+      ultimoCheckIn: null,
+      ultimoDiaCheckin: null,
+      negociosVisitados: 0,
+      totalCheckins: 0,
+      negociosAgregadosHoy: 0,
+      fechaUltimoNegocioAgregado: null,
+      fechaRegistro: admin.firestore.FieldValue.serverTimestamp(),
+      insignias: ['usuario_apklis'], // ⭐ Insignia de bienvenida
+      registradoCon: 'apklis',
+    };
+
+    await perfilRef.set(perfilInicial);
+
+    console.log(`🎉 [Ruta Tranqui] Nuevo usuario registrado: @${apklisUsername} (+${BONUS_BIENVENIDA} pts de bienvenida)`);
+
+    res.json({
+      success: true,
+      username: apklisUsername,
+      esNuevoUsuario: true,
+      puntosTotales: BONUS_BIENVENIDA,
+      puntosBonus: BONUS_BIENVENIDA,
+    });
+  } catch (error) {
+    console.error('❌ Error en registro con Apklis:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.post('/api/ruta-tranqui/reset-mensual', async (req, res) => {
   try {
     const { adminUsername } = req.body;
@@ -2332,6 +2410,7 @@ app.listen(port, () => {
   console.log(`   GET  /api/ruta-tranqui/perfil         ⭐ GAMIFICACIÓN perfil`);
   console.log(`   GET  /api/ruta-tranqui/ranking        ⭐ GAMIFICACIÓN ranking`);
   console.log(`   GET  /api/ruta-tranqui/insignias      ⭐ GAMIFICACIÓN insignias`);
+  console.log(`   POST /api/ruta-tranqui/registrar-con-apklis ⭐ GAMIFICACIÓN registro Apklis`);
   console.log(`   POST /api/ruta-tranqui/reset-mensual  ⭐ GAMIFICACIÓN reset (admin)`);
   console.log(`   GET  /api/health`);
 });
