@@ -62,9 +62,7 @@ const CATEGORIAS_VALIDAS = [
 // =========================================================
 // USUARIOS ADMIN
 // =========================================================
-const ADMIN_USERNAMES = [
-  'noblesse',
-];
+const ADMIN_USERNAMES = ['noblesse'];
 
 function esAdmin(username) {
   return ADMIN_USERNAMES.includes(username);
@@ -166,6 +164,273 @@ function validarCategorias(categoriaPrincipal, categoriasSecundarias) {
     }
   }
   return { valido: true };
+}
+
+// =========================================================
+// ⭐ 100 NIVELES (Generados matemáticamente para progresión justa)
+// =========================================================
+function generarNiveles() {
+  const niveles = [{ nivel: 1, nombre: 'Aprendiz', puntos: 0 }];
+  const titulos = [
+    'Aprendiz', 'Caminante', 'Explorador', 'Conocedor', 'Experto Local',
+    'Veterano', 'Maestro', 'Leyenda', 'Mito', 'Divino'
+  ];
+  
+  for (let i = 2; i <= 100; i++) {
+    const puntos = Math.floor(80 * Math.pow(i, 1.6));
+    const tituloIdx = Math.min(Math.floor((i - 1) / 10), titulos.length - 1);
+    niveles.push({ 
+      nivel: i, 
+      nombre: i === 100 ? '⭐ Dios de Tranqui' : `${titulos[tituloIdx]} Nv.${i}`, 
+      puntos: puntos 
+    });
+  }
+  return niveles;
+}
+
+const NIVELES = generarNiveles();
+
+// =========================================================
+// ⭐ 50 INSIGNIAS (Badges)
+// =========================================================
+const INSIGNIAS = {
+  // --- EXPLORACIÓN (1-15) ---
+  primer_paso: { nombre: 'Primer Paso', emoji: '🚶', categoria: 'exploracion', descripcion: 'Tu primer check-in en la Ruta Tranqui' },
+  catador: { nombre: 'Catador', emoji: '☕', categoria: 'exploracion', descripcion: '5 cafeterías visitadas' },
+  foodie: { nombre: 'Foodie', emoji: '🍔', categoria: 'exploracion', descripcion: '10 restaurantes visitados' },
+  noctambulo: { nombre: 'Noctámbulo', emoji: '🌃', categoria: 'exploracion', descripcion: '3 bares después de las 8pm' },
+  turista_local: { nombre: 'Turista Local', emoji: '🏘️', categoria: 'exploracion', descripcion: 'Visitas en 5 municipios distintos' },
+  provincial: { nombre: 'Provincial', emoji: '🗺️', categoria: 'exploracion', descripcion: 'Visitas en 3 provincias distintas' },
+  coleccionista: { nombre: 'Coleccionista', emoji: '🎯', categoria: 'exploracion', descripcion: '50 negocios únicos visitados' },
+  centurion: { nombre: 'Centurión', emoji: '🌟', categoria: 'exploracion', descripcion: '100 negocios únicos visitados' },
+  magnate: { nombre: 'Magnate', emoji: '👑', categoria: 'exploracion', descripcion: '200 negocios únicos visitados' },
+  omnisciente: { nombre: 'Omnisciente', emoji: '👁️', categoria: 'exploracion', descripcion: '300 negocios únicos visitados' },
+  barrio_x: { nombre: 'Barrio X', emoji: '📍', categoria: 'exploracion', descripcion: '10 check-ins en un mismo municipio' },
+  isla_completa: { nombre: 'Isla Completa', emoji: '🇨🇺', categoria: 'exploracion', descripcion: 'Visitas en 10 provincias distintas' },
+  madrugada: { nombre: 'Madrugada', emoji: '🦉', categoria: 'exploracion', descripcion: 'Check-in entre 12am y 5am' },
+  fin_de_semana: { nombre: 'Fin de Semana', emoji: '🎉', categoria: 'exploracion', descripcion: 'Check-in un sábado o domingo' },
+  viajero_frecuente: { nombre: 'Viajero Frecuente', emoji: '✈️', categoria: 'exploracion', descripcion: 'Check-ins en 50 municipios distintos' },
+
+  // --- CONSTANCIA (16-25) ---
+  racha_inicial: { nombre: 'Racha Inicial', emoji: '⚡', categoria: 'constancia', descripcion: 'Streak de 3 días consecutivos' },
+  en_llamas: { nombre: 'En Llamas', emoji: '🔥', categoria: 'constancia', descripcion: 'Streak de 7 días consecutivos' },
+  imparable: { nombre: 'Imparable', emoji: '💪', categoria: 'constancia', descripcion: 'Streak de 15 días consecutivos' },
+  adicto_tranqui: { nombre: 'Adicto Tranqui', emoji: '🏅', categoria: 'constancia', descripcion: 'Streak de 30 días consecutivos' },
+  leyenda_viva: { nombre: 'Leyenda Viva', emoji: '🐐', categoria: 'constancia', descripcion: 'Streak de 60 días consecutivos' },
+  eterno: { nombre: 'Eterno', emoji: '♾️', categoria: 'constancia', descripcion: 'Streak de 100 días consecutivos' },
+  madrugador: { nombre: 'Madrugador', emoji: '🌅', categoria: 'constancia', descripcion: 'Check-in antes de las 7am por 5 días' },
+  nocturno: { nombre: 'Nocturno', emoji: '🌙', categoria: 'constancia', descripcion: 'Check-in después de las 10pm por 5 días' },
+  semana_perfecta: { nombre: 'Semana Perfecta', emoji: '📅', categoria: 'constancia', descripcion: '7 check-ins en 7 días distintos' },
+  mes_de_oro: { nombre: 'Mes de Oro', emoji: '🗓️', categoria: 'constancia', descripcion: '20 check-ins en un mismo mes' },
+
+  // --- PUNTUACIÓN Y LOGROS (26-35) ---
+  primer_100: { nombre: 'Primer 100', emoji: '💯', categoria: 'puntos', descripcion: 'Alcanza 100 puntos totales' },
+  primer_500: { nombre: 'Primer 500', emoji: '🥈', categoria: 'puntos', descripcion: 'Alcanza 500 puntos totales' },
+  primer_1000: { nombre: 'Primer 1000', emoji: '🥇', categoria: 'puntos', descripcion: 'Alcanza 1000 puntos totales' },
+  primer_5000: { nombre: 'Primer 5000', emoji: '💎', categoria: 'puntos', descripcion: 'Alcanza 5000 puntos totales' },
+  primer_10000: { nombre: 'Primer 10k', emoji: '🚀', categoria: 'puntos', descripcion: 'Alcanza 10,000 puntos totales' },
+  primer_50000: { nombre: 'Primer 50k', emoji: '🌌', categoria: 'puntos', descripcion: 'Alcanza 50,000 puntos totales' },
+  rico_en_puntos: { nombre: 'Rico en Puntos', emoji: '💰', categoria: 'puntos', descripcion: 'Gana 500 puntos en un solo mes' },
+  golpe_de_suerte: { nombre: 'Golpe de Suerte', emoji: '🍀', categoria: 'puntos', descripcion: 'Gana 100 puntos en un solo check-in' },
+  nivel_10: { nombre: 'Nivel 10', emoji: '🔟', categoria: 'puntos', descripcion: 'Alcanza el Nivel 10' },
+  nivel_50: { nombre: 'Nivel 50', emoji: '🔱', categoria: 'puntos', descripcion: 'Alcanza el Nivel 50' },
+
+  // --- ESPECIALES Y COMUNIDAD (36-50) ---
+  campeon_mensual: { nombre: 'Campeón Mensual', emoji: '🏆', categoria: 'especial', descripcion: 'Fuiste #1 en el ranking mensual' },
+  top_3_mensual: { nombre: 'Podio Mensual', emoji: '🥉', categoria: 'especial', descripcion: 'Quedaste en el Top 3 del ranking' },
+  usuario_apklis: { nombre: 'Usuario Apklis', emoji: '🇨🇺', categoria: 'especial', descripcion: 'Te uniste a la Ruta Tranqui con Apklis' },
+  creador: { nombre: 'Creador', emoji: '🏗️', categoria: 'especial', descripcion: 'Agregaste tu primer negocio al mapa' },
+  contribuyente: { nombre: 'Contribuyente', emoji: '🤝', categoria: 'especial', descripcion: 'Agregaste 5 negocios al mapa' },
+  mapamaster: { nombre: 'MapaMaster', emoji: '🗺️', categoria: 'especial', descripcion: 'Agregaste 20 negocios al mapa' },
+  critico: { nombre: 'Crítico', emoji: '✍️', categoria: 'especial', descripcion: 'Dejaste 10 comentarios con puntuación' },
+  sociable: { nombre: 'Sociable', emoji: '🗣️', categoria: 'especial', descripcion: 'Dejaste 50 comentarios' },
+  verificador: { nombre: 'Verificador', emoji: '✅', categoria: 'especial', descripcion: 'Tus check-ins ayudaron a verificar un negocio' },
+  vip_gold: { nombre: 'VIP Gold', emoji: '👑', categoria: 'especial', descripcion: 'Hiciste check-in en 10 negocios VIP Oro' },
+  vip_silver: { nombre: 'VIP Silver', emoji: '🥈', categoria: 'especial', descripcion: 'Hiciste check-in en 10 negocios VIP Plata' },
+  vip_bronze: { nombre: 'VIP Bronze', emoji: '🥉', categoria: 'especial', descripcion: 'Hiciste check-in en 10 negocios VIP Bronce' },
+  descubridor: { nombre: 'Descubridor', emoji: '🔭', categoria: 'especial', descripcion: 'Fuiste el primer check-in en un negocio nuevo' },
+  leal: { nombre: 'Leal', emoji: '❤️', categoria: 'especial', descripcion: '10 check-ins en el mismo negocio' },
+  ultra_leal: { nombre: 'Ultra Leal', emoji: '💖', categoria: 'especial', descripcion: '30 check-ins en el mismo negocio' },
+};
+
+const LIMITE_NEGOCIOS_POR_DIA = 3;
+const LIMITE_CHECKINS_POR_DIA = 10;
+const COOLDOWN_NEGOCIO_HORAS = 24;
+const RADIO_VALIDO_METROS = 50;
+const CHECKINS_PARA_VERIFICAR = 3;
+
+function obtenerTipoNegocioParaPuntos(negocioData) {
+  if (negocioData.esVip && negocioData.tipoVip) {
+    return negocioData.tipoVip.toLowerCase();
+  }
+  if (negocioData.verificado === true) {
+    return 'verificado';
+  }
+  return 'normal';
+}
+
+function calcularPuntosCheckin(negocioData, streakActual) {
+  const tipo = obtenerTipoNegocioParaPuntos(negocioData);
+  let puntos = PUNTOS_POR_TIPO[tipo] || 10;
+
+  if (streakActual >= 15) puntos += 10;
+  else if (streakActual >= 7) puntos += 5;
+  else if (streakActual >= 3) puntos += 2;
+
+  return { puntos, tipo };
+}
+
+function calcularNivel(puntosTotales) {
+  let nivelActual = NIVELES[0];
+  for (const n of NIVELES) {
+    if (puntosTotales >= n.puntos) {
+      nivelActual = n;
+    }
+  }
+  return nivelActual.nivel;
+}
+
+function obtenerMesActual() {
+  const ahora = new Date();
+  const anio = ahora.getFullYear();
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+  return `${anio}-${mes}`;
+}
+
+function obtenerDiaActual() {
+  const ahora = new Date();
+  const anio = ahora.getFullYear();
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+  const dia = String(ahora.getDate()).padStart(2, '0');
+  return `${anio}-${mes}-${dia}`;
+}
+
+async function actualizarPerfilMes(perfilRef, perfilData) {
+  const mesActual = obtenerMesActual();
+  if (perfilData.mesActual !== mesActual) {
+    await perfilRef.update({
+      puntosMesActual: 0,
+      mesActual: mesActual,
+    });
+    return { ...perfilData, puntosMesActual: 0, mesActual: mesActual };
+  }
+  return perfilData;
+}
+
+// ⭐ HELPER: Sumar puntos y recalcular nivel automáticamente
+async function sumarPuntosYNivel(perfilRef, perfilData, puntos) {
+  const nuevosPuntosTotales = (perfilData.puntosTotales || 0) + puntos;
+  const nuevosPuntosMes = (perfilData.puntosMesActual || 0) + puntos;
+  const nuevoNivel = calcularNivel(nuevosPuntosTotales);
+
+  const datosActualizacion = {
+    puntosTotales: nuevosPuntosTotales,
+    puntosMesActual: nuevosPuntosMes,
+  };
+
+  if (nuevoNivel > (perfilData.nivel || 1)) {
+    datosActualizacion.nivel = nuevoNivel;
+  }
+
+  await perfilRef.update(datosActualizacion);
+  return { puntosTotales: nuevosPuntosTotales, nuevoNivel };
+}
+
+async function detectarInsignias(perfilRef, perfilData, checkins) {
+  const insigniasActuales = perfilData.insignias || [];
+  const nuevasInsignias = [];
+
+  const totalCheckins = perfilData.totalCheckins || 0;
+  const negociosVisitados = perfilData.negociosVisitados || 0;
+  const streak = perfilData.streakActual || 0;
+  const puntosTotales = perfilData.puntosTotales || 0;
+
+  // --- EXPLORACIÓN ---
+  if (totalCheckins >= 1 && !insigniasActuales.includes('primer_paso')) nuevasInsignias.push('primer_paso');
+  if (negociosVisitados >= 50 && !insigniasActuales.includes('coleccionista')) nuevasInsignias.push('coleccionista');
+  if (negociosVisitados >= 100 && !insigniasActuales.includes('centurion')) nuevasInsignias.push('centurion');
+  if (negociosVisitados >= 200 && !insigniasActuales.includes('magnate')) nuevasInsignias.push('magnate');
+  if (negociosVisitados >= 300 && !insigniasActuales.includes('omnisciente')) nuevasInsignias.push('omnisciente');
+
+  // --- CONSTANCIA ---
+  if (streak >= 3 && !insigniasActuales.includes('racha_inicial')) nuevasInsignias.push('racha_inicial');
+  if (streak >= 7 && !insigniasActuales.includes('en_llamas')) nuevasInsignias.push('en_llamas');
+  if (streak >= 15 && !insigniasActuales.includes('imparable')) nuevasInsignias.push('imparable');
+  if (streak >= 30 && !insigniasActuales.includes('adicto_tranqui')) nuevasInsignias.push('adicto_tranqui');
+  if (streak >= 60 && !insigniasActuales.includes('leyenda_viva')) nuevasInsignias.push('leyenda_viva');
+  if (streak >= 100 && !insigniasActuales.includes('eterno')) nuevasInsignias.push('eterno');
+
+  // --- PUNTUACIÓN ---
+  if (puntosTotales >= 100 && !insigniasActuales.includes('primer_100')) nuevasInsignias.push('primer_100');
+  if (puntosTotales >= 500 && !insigniasActuales.includes('primer_500')) nuevasInsignias.push('primer_500');
+  if (puntosTotales >= 1000 && !insigniasActuales.includes('primer_1000')) nuevasInsignias.push('primer_1000');
+  if (puntosTotales >= 5000 && !insigniasActuales.includes('primer_5000')) nuevasInsignias.push('primer_5000');
+  if (puntosTotales >= 10000 && !insigniasActuales.includes('primer_10000')) nuevasInsignias.push('primer_10000');
+  if (puntosTotales >= 50000 && !insigniasActuales.includes('primer_50000')) nuevasInsignias.push('primer_50000');
+
+  // Calcular nivel actual para insignias de nivel
+  let nivelActual = 1;
+  for (const n of NIVELES) {
+    if (puntosTotales >= n.puntos) nivelActual = n.nivel;
+  }
+  if (nivelActual >= 10 && !insigniasActuales.includes('nivel_10')) nuevasInsignias.push('nivel_10');
+  if (nivelActual >= 50 && !insigniasActuales.includes('nivel_50')) nuevasInsignias.push('nivel_50');
+
+  // --- Lógica avanzada de categorías (simplificada para no sobrecargar la DB) ---
+  try {
+    const categoriasVisitadas = {};
+    const municipiosVisitados = new Set();
+    const provinciasVisitadas = new Set();
+    let baresNocturnos = 0;
+    let cafeterias = 0;
+    let restaurantes = 0;
+
+    for (const checkin of checkins) {
+      const negocioRef = db.collection('negocios').doc(checkin.negocioId);
+      const negocioDoc = await negocioRef.get();
+      if (!negocioDoc.exists) continue;
+      const nd = negocioDoc.data();
+
+      const cat = nd.categoriaPrincipal || 'otros';
+      categoriasVisitadas[cat] = (categoriasVisitadas[cat] || 0) + 1;
+
+      if (nd.municipio) municipiosVisitados.add(nd.municipio);
+      if (nd.provincia) provinciasVisitadas.add(nd.provincia);
+
+      if (cat === 'cafeteria') cafeterias++;
+      if (cat === 'restaurante') restaurantes++;
+      if (cat === 'bar') {
+        const hora = checkin.timestamp.toDate().getHours();
+        if (hora >= 20) baresNocturnos++;
+      }
+    }
+
+    if (cafeterias >= 5 && !insigniasActuales.includes('catador')) nuevasInsignias.push('catador');
+    if (restaurantes >= 10 && !insigniasActuales.includes('foodie')) nuevasInsignias.push('foodie');
+    if (baresNocturnos >= 3 && !insigniasActuales.includes('noctambulo')) nuevasInsignias.push('noctambulo');
+    if (municipiosVisitados.size >= 5 && !insigniasActuales.includes('turista_local')) nuevasInsignias.push('turista_local');
+    if (provinciasVisitadas.size >= 3 && !insigniasActuales.includes('provincial')) nuevasInsignias.push('provincial');
+  } catch (e) {
+    console.error('⚠️ Error detectando insignias de categoría:', e.message);
+  }
+
+  if (nuevasInsignias.length > 0) {
+    const todas = [...insigniasActuales, ...nuevasInsignias];
+    await perfilRef.update({ insignias: todas });
+  }
+
+  return nuevasInsignias;
+}
+
+function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 // --- INICIALIZAR EXPRESS ---
@@ -299,7 +564,7 @@ app.post('/api/negocios', async (req, res) => {
     
     const docRef = await db.collection('negocios').add(negocioData);
 
-    // ⭐ Actualizar contador de negocios agregados por el usuario
+    // ⭐ Actualizar contador y DAR PUNTOS por agregar negocio
     if (agregadoPor) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
@@ -319,19 +584,26 @@ app.post('/api/negocios', async (req, res) => {
           }
         }
         
+        // ⭐ Lógica de puntos: Máximo 2 negocios con puntos por día
+        const dioPuntosHoy = perfilData.fechaUltimoNegocioConPuntos === diaActual;
+        const conteoPuntos = dioPuntosHoy ? (perfilData.negociosConPuntosHoy || 0) : 0;
+
+        if (conteoPuntos < 2) {
+          await sumarPuntosYNivel(perfilRef, perfilData, 25);
+          await perfilRef.update({
+            fechaUltimoNegocioConPuntos: diaActual,
+            negociosConPuntosHoy: conteoPuntos + 1
+          });
+        }
+
         await perfilRef.update({
           negociosAgregadosHoy: nuevoContador,
           fechaUltimoNegocioAgregado: admin.firestore.FieldValue.serverTimestamp(),
         });
-      } else {
-        await perfilRef.set({
-          negociosAgregadosHoy: 1,
-          fechaUltimoNegocioAgregado: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
       }
     }
 
-    console.log(`✅ Negocio agregado con ID: ${docRef.id} (${provincia} - ${municipio}) [Categoría: ${categoriaPrincipal}] [Por: ${agregadoPor || 'desconocido'}]`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id}`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -1416,10 +1688,25 @@ app.get('/api/comentarios/:negocioId', async (req, res) => {
 app.post('/api/comentarios/:negocioId', async (req, res) => {
   console.log(`📡 POST /api/comentarios/${req.params.negocioId}`);
   try {
-    const { texto, autor, puntuacion } = req.body;
+    // ⭐ Se requiere 'username' para dar puntos y validar anti-trampa
+    const { texto, autor, puntuacion, username } = req.body;
 
-    if (!texto || texto.trim() === '') {
-      return res.status(400).json({ success: false, message: 'El texto del comentario es obligatorio' });
+    // ⭐ ANTI-TRAMPA 1 (MODIFICADA): Permitir comentarios cortos, pero solo dar puntos si >= 15 chars
+    if (!texto || texto.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'El texto del comentario no puede estar vacío.' });
+    }
+
+    // ⭐ ANTI-TRAMPA 2: Verificar que no sea el dueño del negocio
+    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
+    const negocioDoc = await negocioRef.get();
+    
+    if (!negocioDoc.exists) {
+        return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+    }
+    
+    const negocioData = negocioDoc.data();
+    if (username && negocioData.propietarioUsername === username) {
+      return res.status(403).json({ success: false, message: 'No puedes reseñar tu propio negocio.' });
     }
 
     const comentarioData = {
@@ -1435,10 +1722,6 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
       .collection('comentarios')
       .add(comentarioData);
 
-    const negocioRef = db.collection('negocios').doc(req.params.negocioId);
-    const negocioDoc = await negocioRef.get();
-    const negocioData = negocioDoc.data();
-
     if (negocioData) {
       const totalComentarios = (negocioData.totalComentarios || 0) + 1;
       const totalPuntuaciones = (negocioData.totalPuntuaciones || 0) + (puntuacion ? 1 : 0);
@@ -1451,6 +1734,33 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
         sumaPuntuaciones: sumaPuntuaciones,
         promedioPuntuacion: promedioPuntuacion,
       });
+    }
+
+    // ⭐ DAR PUNTOS POR RESEÑAR: SOLO si el comentario tiene 15 o más caracteres
+    if (username && texto.trim().length >= 15) {
+      const perfilRef = db.collection('perfiles_usuarios').doc(username);
+      const perfilDoc = await perfilRef.get();
+      
+      if (perfilDoc.exists) {
+        const perfilData = perfilDoc.data();
+        const hoy = obtenerDiaActual();
+        const dioPuntosHoy = perfilData.fechaUltimaResenaConPuntos === hoy;
+        const conteo = dioPuntosHoy ? (perfilData.resenasConPuntosHoy || 0) : 0;
+
+        // ⭐ ANTI-TRAMPA 3: Máximo 3 reseñas con puntos por día
+        if (conteo < 3) {
+          await sumarPuntosYNivel(perfilRef, perfilData, 15);
+          await perfilRef.update({
+            fechaUltimaResenaConPuntos: hoy,
+            resenasConPuntosHoy: conteo + 1
+          });
+          console.log(`✅ @${username} ganó 15 puntos por reseñar (comentario >= 15 chars).`);
+        } else {
+          console.log(`⚠️ @${username} alcanzó el límite diario de puntos por reseñas.`);
+        }
+      }
+    } else if (username) {
+        console.log(`⚠️ @${username} comentó, pero no ganó puntos (menos de 15 caracteres).`);
     }
 
     console.log(`✅ Comentario agregado con ID: ${docRef.id}`);
@@ -1766,193 +2076,41 @@ const PUNTOS_POR_TIPO = {
   oroplus: 40,
 };
 
-const NIVELES = [
-  { nivel: 1, nombre: 'Aprendiz', puntos: 0 },
-  { nivel: 2, nombre: 'Caminante', puntos: 100 },
-  { nivel: 3, nombre: 'Explorador', puntos: 300 },
-  { nivel: 4, nombre: 'Conocedor', puntos: 700 },
-  { nivel: 5, nombre: 'Experto Local', puntos: 1500 },
-  { nivel: 6, nombre: 'Leyenda', puntos: 3000 },
-  { nivel: 7, nombre: 'Maestro Tranqui', puntos: 6000 },
-];
-
-const INSIGNIAS = {
-  primer_paso: { nombre: 'Primer paso', emoji: '🚶', categoria: 'exploracion', descripcion: 'Tu primer check-in' },
-  catador: { nombre: 'Catador', emoji: '☕', categoria: 'exploracion', descripcion: '5 cafeterías visitadas' },
-  foodie: { nombre: 'Foodie', emoji: '🍔', categoria: 'exploracion', descripcion: '10 restaurantes visitados' },
-  noctambulo: { nombre: 'Noctámbulo', emoji: '🌃', categoria: 'exploracion', descripcion: '3 bares después de las 8pm' },
-  turista_local: { nombre: 'Turista local', emoji: '🏘️', categoria: 'exploracion', descripcion: 'Visitas en 5 municipios distintos' },
-  provincial: { nombre: 'Provincial', emoji: '🗺️', categoria: 'exploracion', descripcion: 'Visitas en 3 provincias distintas' },
-  coleccionista: { nombre: 'Coleccionista', emoji: '🎯', categoria: 'exploracion', descripcion: '50 negocios únicos visitados' },
-  centurion: { nombre: 'Centurión', emoji: '🌟', categoria: 'exploracion', descripcion: '100 negocios únicos visitados' },
-  racha_inicial: { nombre: 'Racha inicial', emoji: '⚡', categoria: 'constancia', descripcion: 'Streak de 3 días' },
-  en_llamas: { nombre: 'En llamas', emoji: '🔥', categoria: 'constancia', descripcion: 'Streak de 7 días' },
-  imparable: { nombre: 'Imparable', emoji: '💪', categoria: 'constancia', descripcion: 'Streak de 15 días' },
-  adicto_tranqui: { nombre: 'Adicto Tranqui', emoji: '🏅', categoria: 'constancia', descripcion: 'Streak de 30 días' },
-  campeon_mensual: { nombre: 'Campeón Mensual', emoji: '🏆', categoria: 'especial', descripcion: 'Fuiste #1 en el ranking mensual' },
-  usuario_apklis: { nombre: 'Usuario Apklis', emoji: '🇨🇺', categoria: 'especial', descripcion: 'Te uniste a la Ruta Tranqui con Apklis' },
-};
-
-const LIMITE_NEGOCIOS_POR_DIA = 3;
-const LIMITE_CHECKINS_POR_DIA = 10;
-const COOLDOWN_NEGOCIO_HORAS = 24;
-const RADIO_VALIDO_METROS = 50;
-const CHECKINS_PARA_VERIFICAR = 3;
-
-function obtenerTipoNegocioParaPuntos(negocioData) {
-  if (negocioData.esVip && negocioData.tipoVip) {
-    return negocioData.tipoVip.toLowerCase();
-  }
-  if (negocioData.verificado === true) {
-    return 'verificado';
-  }
-  return 'normal';
-}
-
-function calcularPuntosCheckin(negocioData, streakActual) {
-  const tipo = obtenerTipoNegocioParaPuntos(negocioData);
-  let puntos = PUNTOS_POR_TIPO[tipo] || 10;
-
-  if (streakActual >= 15) puntos += 10;
-  else if (streakActual >= 7) puntos += 5;
-  else if (streakActual >= 3) puntos += 2;
-
-  return { puntos, tipo };
-}
-
-function calcularNivel(puntosTotales) {
-  let nivelActual = NIVELES[0];
-  for (const n of NIVELES) {
-    if (puntosTotales >= n.puntos) {
-      nivelActual = n;
-    }
-  }
-  return nivelActual.nivel;
-}
-
-function obtenerMesActual() {
-  const ahora = new Date();
-  const anio = ahora.getFullYear();
-  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
-  return `${anio}-${mes}`;
-}
-
-function obtenerDiaActual() {
-  const ahora = new Date();
-  const anio = ahora.getFullYear();
-  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
-  const dia = String(ahora.getDate()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}`;
-}
-
-async function actualizarPerfilMes(perfilRef, perfilData) {
-  const mesActual = obtenerMesActual();
-  if (perfilData.mesActual !== mesActual) {
-    await perfilRef.update({
-      puntosMesActual: 0,
-      mesActual: mesActual,
-    });
-    return { ...perfilData, puntosMesActual: 0, mesActual: mesActual };
-  }
-  return perfilData;
-}
-
-async function detectarInsignias(perfilRef, perfilData, checkins) {
-  const insigniasActuales = perfilData.insignias || [];
-  const nuevasInsignias = [];
-
-  const totalCheckins = perfilData.totalCheckins || 0;
-  const negociosVisitados = perfilData.negociosVisitados || 0;
-  const streak = perfilData.streakActual || 0;
-
-  if (totalCheckins >= 1 && !insigniasActuales.includes('primer_paso')) {
-    nuevasInsignias.push('primer_paso');
-  }
-  if (negociosVisitados >= 50 && !insigniasActuales.includes('coleccionista')) {
-    nuevasInsignias.push('coleccionista');
-  }
-  if (negociosVisitados >= 100 && !insigniasActuales.includes('centurion')) {
-    nuevasInsignias.push('centurion');
-  }
-
-  if (streak >= 3 && !insigniasActuales.includes('racha_inicial')) {
-    nuevasInsignias.push('racha_inicial');
-  }
-  if (streak >= 7 && !insigniasActuales.includes('en_llamas')) {
-    nuevasInsignias.push('en_llamas');
-  }
-  if (streak >= 15 && !insigniasActuales.includes('imparable')) {
-    nuevasInsignias.push('imparable');
-  }
-  if (streak >= 30 && !insigniasActuales.includes('adicto_tranqui')) {
-    nuevasInsignias.push('adicto_tranqui');
-  }
-
+// ⭐ NUEVA RUTA: Ganar puntos por compartir la app
+app.post('/api/ruta-tranqui/compartir', async (req, res) => {
   try {
-    const categoriasVisitadas = {};
-    const municipiosVisitados = new Set();
-    const provinciasVisitadas = new Set();
-    let baresNocturnos = 0;
-    let cafeterias = 0;
-    let restaurantes = 0;
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ success: false, message: 'Falta username' });
 
-    for (const checkin of checkins) {
-      const negocioRef = db.collection('negocios').doc(checkin.negocioId);
-      const negocioDoc = await negocioRef.get();
-      if (!negocioDoc.exists) continue;
-      const nd = negocioDoc.data();
+    const perfilRef = db.collection('perfiles_usuarios').doc(username);
+    const perfilDoc = await perfilRef.get();
 
-      const cat = nd.categoriaPrincipal || 'otros';
-      categoriasVisitadas[cat] = (categoriasVisitadas[cat] || 0) + 1;
-
-      if (nd.municipio) municipiosVisitados.add(nd.municipio);
-      if (nd.provincia) provinciasVisitadas.add(nd.provincia);
-
-      if (cat === 'cafeteria') cafeterias++;
-      if (cat === 'restaurante') restaurantes++;
-      if (cat === 'bar') {
-        const hora = checkin.timestamp.toDate().getHours();
-        if (hora >= 20) baresNocturnos++;
-      }
+    if (!perfilDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
     }
 
-    if (cafeterias >= 5 && !insigniasActuales.includes('catador')) {
-      nuevasInsignias.push('catador');
+    const perfilData = perfilDoc.data();
+    const hoy = obtenerDiaActual();
+
+    // ⭐ ANTI-TRAMPA: Verificar si ya compartió hoy
+    if (perfilData.ultimaFechaCompartido === hoy) {
+      return res.json({ 
+        success: true, 
+        puntosGanados: 0, 
+        mensaje: 'Ya ganaste puntos por compartir hoy. ¡Vuelve mañana!' 
+      });
     }
-    if (restaurantes >= 10 && !insigniasActuales.includes('foodie')) {
-      nuevasInsignias.push('foodie');
-    }
-    if (baresNocturnos >= 3 && !insigniasActuales.includes('noctambulo')) {
-      nuevasInsignias.push('noctambulo');
-    }
-    if (municipiosVisitados.size >= 5 && !insigniasActuales.includes('turista_local')) {
-      nuevasInsignias.push('turista_local');
-    }
-    if (provinciasVisitadas.size >= 3 && !insigniasActuales.includes('provincial')) {
-      nuevasInsignias.push('provincial');
-    }
-  } catch (e) {
-    console.error('⚠️ Error detectando insignias de categoría:', e.message);
+
+    // Sumar puntos y actualizar
+    await sumarPuntosYNivel(perfilRef, perfilData, 5);
+    await perfilRef.update({ ultimaFechaCompartido: hoy });
+
+    res.json({ success: true, puntosGanados: 5, mensaje: '¡+5 puntos por compartir Tranqui!' });
+  } catch (error) {
+    console.error('❌ Error en compartir:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
-
-  if (nuevasInsignias.length > 0) {
-    const todas = [...insigniasActuales, ...nuevasInsignias];
-    await perfilRef.update({ insignias: todas });
-  }
-
-  return nuevasInsignias;
-}
-
-function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
+});
 
 app.post('/api/ruta-tranqui/checkin', async (req, res) => {
   try {
@@ -2406,6 +2564,7 @@ app.listen(port, () => {
   console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
   console.log(`   POST /api/notificaciones/enviar-todos    ⭐ FCM push global (admin)`);
   console.log(`   GET  /api/notificaciones/anuncios-activos ⭐ FCM fallback`);
+  console.log(`   POST /api/ruta-tranqui/compartir         ⭐ GAMIFICACIÓN compartir (+5 pts/día)`);
   console.log(`   POST /api/ruta-tranqui/checkin        ⭐ GAMIFICACIÓN check-in`);
   console.log(`   GET  /api/ruta-tranqui/perfil         ⭐ GAMIFICACIÓN perfil`);
   console.log(`   GET  /api/ruta-tranqui/ranking        ⭐ GAMIFICACIÓN ranking`);
