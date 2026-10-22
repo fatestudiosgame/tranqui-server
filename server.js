@@ -88,7 +88,7 @@ function duracionDiasPlan(plan) {
 }
 
 // =========================================================
-// ⭐ AUTO-LIMPIEZA DE VIP (Fuente de verdad: colección 'licencias')
+// ⭐ AUTO-LIMPIEZA DE VIP (Versión Segura: Solo alerta, NO modifica la BD)
 // =========================================================
 async function sincronizarEstadoVip(negocioId, negocioData) {
   if (negocioData.esVip && negocioData.propietarioUsername) {
@@ -111,18 +111,13 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
       }
     });
 
-    // Si NO tiene licencia vigente, pero el negocio sigue marcado como VIP, lo limpiamos automáticamente
+    // ⚠️ CAMBIO CRÍTICO: Si NO tiene licencia vigente, SOLO ALERTAMOS en consola, NO BORRAMOS
     if (!tieneLicenciaVigente) {
-      console.log(`🧹 [AUTO-LIMPIEZA] Negocio ${negocioId} perdió estado VIP (licencia de @${negocioData.propietarioUsername} expirada/cancelada).`);
-      await db.collection('negocios').doc(negocioId).update({
-        esVip: false,
-        tipoVip: null,
-        vipHasta: null
-      });
-      return false; // Ya no es VIP
+      console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) del usuario @${negocioData.propietarioUsername} aparece como VIP pero NO tiene licencia vigente en la colección 'licencias'. Revisa manualmente.`);
+      // ❌ NO hacemos el .update() para evitar que se desactive solo
     }
   }
-  return negocioData.esVip;
+  return negocioData.esVip; // Siempre devuelve el estado que ya tiene en la BD
 }
 
 // =========================================================
@@ -481,7 +476,7 @@ app.get('/api/negocios', async (req, res) => {
     for (const doc of snapshot.docs) {
       const data = doc.data();
       
-      // ⭐ AUTO-LIMPIEZA: Verificar y corregir estado VIP en tiempo real
+      // ⭐ AUTO-LIMPIEZA: Verificar estado VIP (solo alerta, no modifica)
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
       
       if (esVipReal) {
@@ -491,7 +486,7 @@ app.get('/api/negocios', async (req, res) => {
       negocios.push({ 
         id: doc.id, 
         ...data,
-        esVip: esVipReal // Usamos el estado verificado, no el guardado en DB
+        esVip: esVipReal
       });
     }
     
@@ -654,7 +649,7 @@ app.get('/api/negocios/:id', async (req, res) => {
     
     const data = doc.data();
     
-    // ⭐ AUTO-LIMPIEZA: Verificar y corregir estado VIP en tiempo real
+    // ⭐ AUTO-LIMPIEZA: Verificar estado VIP (solo alerta, no modifica)
     const esVipReal = await sincronizarEstadoVip(req.params.id, data);
     
     res.json({ 
@@ -662,7 +657,7 @@ app.get('/api/negocios/:id', async (req, res) => {
       data: { 
         id: doc.id, 
         ...data,
-        esVip: esVipReal // Usamos el estado verificado
+        esVip: esVipReal
       } 
     });
   } catch (error) {
@@ -1262,7 +1257,7 @@ app.get('/api/admin/stats', async (req, res) => {
 
       if (data.esNegocioPrueba === true) pruebas++;
 
-      // ⭐ AUTO-LIMPIEZA en stats también para mantener consistencia
+      // ⭐ AUTO-LIMPIEZA en stats (solo alerta, no modifica)
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
       
       if (esVipReal) {
@@ -1511,7 +1506,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Sin permisos para agregar productos' });
     }
 
-    if (!esAdminUser && !negocioData.esVip) { // Simplificado: la validación de fecha ya la hace la app o se asume válido si es propietario
+    if (!esAdminUser && !negocioData.esVip) {
       return res.status(403).json({ success: false, message: 'Tu licencia VIP ha expirado. Contacta al administrador para renovarla.' });
     }
 
@@ -2540,9 +2535,9 @@ app.get('/api/health', (req, res) => {
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
-  console.log(`   GET  /api/negocios (con auto-limpieza de VIP)`);
+  console.log(`   GET  /api/negocios (con alerta VIP segura)`);
   console.log(`   POST /api/negocios`);
-  console.log(`   GET  /api/negocios/:id (con auto-limpieza de VIP)`);
+  console.log(`   GET  /api/negocios/:id (con alerta VIP segura)`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
