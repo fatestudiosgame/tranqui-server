@@ -2520,6 +2520,36 @@ app.post('/api/ruta-tranqui/reset-mensual', async (req, res) => {
   }
 });
 
+// =========================================================
+// ⭐ MENSAJES DEL SISTEMA (BUZÓN DE NOVEDADES)
+// =========================================================
+app.get('/api/mensajes-sistema', async (req, res) => {
+  try {
+    // ⭐ Ordenado por fecha descendente (más reciente primero)
+    const snapshot = await db.collection('mensajes_sistema')
+      .orderBy('fecha', 'desc')
+      .get();
+
+    const mensajes = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      mensajes.push({
+        id: doc.id,
+        titulo: data.titulo || 'Sin título',
+        mensaje: data.mensaje || '',
+        // Convertimos el Timestamp de Firestore a formato ISO string para que Dart lo entienda
+        fecha: data.fecha ? data.fecha.toDate().toISOString() : new Date().toISOString(),
+        tipo: data.tipo || 'comunicado' // ej: 'actualizacion', 'evento', 'alerta'
+      });
+    });
+
+    res.json({ success: true, data: mensajes });
+  } catch (error) {
+    console.error('❌ Error al obtener mensajes del sistema:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ========== HEALTH CHECK ==========
 
 app.get('/api/health', (req, res) => {
@@ -2563,6 +2593,7 @@ app.listen(port, () => {
   console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
   console.log(`   POST /api/notificaciones/enviar-todos    ⭐ FCM push global (admin)`);
   console.log(`   GET  /api/notificaciones/anuncios-activos ⭐ FCM fallback`);
+  console.log(`   GET  /api/mensajes-sistema               ⭐ MENSAJES DEL SISTEMA (Buzón)`);
   console.log(`   POST /api/ruta-tranqui/compartir         ⭐ GAMIFICACIÓN compartir (+5 pts/día)`);
   console.log(`   POST /api/ruta-tranqui/checkin        ⭐ GAMIFICACIÓN check-in`);
   console.log(`   GET  /api/ruta-tranqui/perfil         ⭐ GAMIFICACIÓN perfil`);
