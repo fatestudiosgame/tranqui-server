@@ -84,7 +84,7 @@ function duracionDiasPlan(plan) {
   if (r === 3) return 360;
   if (r === 2) return 180;
   if (r === 1) return 30;
-  return 30;
+  return 30; // Por defecto o para 'prueba'
 }
 
 // =========================================================
@@ -114,7 +114,6 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
     // ⚠️ CAMBIO CRÍTICO: Si NO tiene licencia vigente, SOLO ALERTAMOS en consola, NO BORRAMOS
     if (!tieneLicenciaVigente) {
       console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) del usuario @${negocioData.propietarioUsername} aparece como VIP pero NO tiene licencia vigente en la colección 'licencias'. Revisa manualmente.`);
-      // ❌ NO hacemos el .update() para evitar que se desactive solo
     }
   }
   return negocioData.esVip; // Siempre devuelve el estado que ya tiene en la BD
@@ -564,7 +563,56 @@ app.post('/api/negocios', async (req, res) => {
         }
       }
     }
+
+    // ⭐ LÓGICA SEGURA: Diferenciar entre App de Catálogo y App Principal
     
+    // 1. Verificamos si la petición viene explícitamente pidiendo ser "prueba" (desde la app de Catálogo)
+    const solicitaPrueba = req.body.tipoVip === 'prueba' || req.body.esNegocioPrueba === true;
+    
+    let tipoVipFinal = 'normal';
+    let esVipFinal = false;
+    let vipHastaFinal = null;
+    let esNegocioPruebaFinal = false;
+
+    if (solicitaPrueba && agregadoPor) {
+      // ⭐ CASO A: App de Catálogo solicitando periodo de prueba de 1 día
+      esVipFinal = true;
+      tipoVipFinal = 'prueba';
+      esNegocioPruebaFinal = true;
+      const unDiaDespues = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      vipHastaFinal = admin.firestore.Timestamp.fromDate(unDiaDespues);
+      
+    } else {
+      // ⭐ CASO B: App Principal (o petición sin flag de prueba). Mantiene tu lógica original intacta.
+      let tieneLicencia = false;
+      let tipoPlanUsuario = 'bronce';
+
+      if (agregadoPor) {
+        const licenciasSnap = await db.collection('licencias')
+          .where('username', '==', agregadoPor)
+          .get();
+        
+        const ahoraMs = Date.now();
+        licenciasSnap.forEach((d) => {
+          const licData = d.data();
+          if (licData.fechaActivacion) {
+            const inicio = licData.fechaActivacion.toDate().getTime();
+            const fin = inicio + duracionDiasPlan(licData.tipoPlan) * 86400000;
+            if (fin > ahoraMs) {
+              tieneLicencia = true;
+              tipoPlanUsuario = licData.tipoPlan;
+            }
+          }
+        });
+      }
+
+      if (tieneLicencia) {
+        esVipFinal = true;
+        tipoVipFinal = tipoPlanUsuario.toLowerCase();
+      }
+    }
+
+    // 2. Construcción final del objeto con las variables seguras
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
@@ -574,7 +622,15 @@ app.post('/api/negocios', async (req, res) => {
       municipio: municipio.trim(),
       categoriaPrincipal: categoriaPrincipal,
       categoriasSecundarias: categoriasSecundarias || [],
-      esVip: false,
+      
+      // ⭐ Aquí usamos las variables calculadas de forma segura
+      esVip: esVipFinal,
+      tipoVip: tipoVipFinal,
+      propietarioUsername: agregadoPor || 'desconocido',
+      esNegocioPrueba: esNegocioPruebaFinal,
+      fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+      vipHasta: vipHastaFinal,
+      
       fotos: [],
       agregadoPor: agregadoPor || 'desconocido',
       verificado: false,
@@ -624,7 +680,7 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    console.log(`✅ Negocio agregado con ID: ${docRef.id}`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (Prueba: ${esNegocioPruebaFinal})`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -705,6 +761,19 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
 
     if (!esAdminUser && !esPropietario) {
       return res.status(403).json({ success: false, message: 'No tienes permiso para modificar las fotos de este negocio' });
+    }
+
+    // ⭐ VALIDACIÓN DE PERIODO DE PRUEBA (1 DÍA) PARA FOTOS
+    if (!esAdminUser && negocioData.esNegocioPrueba === true && negocioData.fechaCreacion) {
+      const fechaCreacion = negocioData.fechaCreacion.toDate();
+      const unDiaDespues = new Date(fechaCreacion.getTime() + 24 * 60 * 60 * 1000);
+      
+      if (new Date() > unDiaDespues) {
+        return res.status(403).json({ 
+          success: false, 
+          message: '⏳ Tu periodo de prueba de 1 día ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+        });
+      }
     }
 
     await negocioRef.update({
@@ -1072,13 +1141,27 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       return res.status(403).json({ success: false, message: 'No tienes permiso para editar este negocio' });
     }
 
-    if (!negocioData.esVip || !negocioData.vipHasta) {
+    if (!negocioData.esVip) {
       return res.status(403).json({ success: false, message: 'Este negocio no es VIP' });
     }
 
-    const vipHasta = negocioData.vipHasta.toDate();
-    if (vipHasta <= new Date()) {
-      return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado. Contacta al administrador para renovarla.' });
+    // ⭐ VALIDACIÓN DE PERIODO DE PRUEBA (1 DÍA)
+    if (negocioData.esNegocioPrueba === true && negocioData.fechaCreacion) {
+      const fechaCreacion = negocioData.fechaCreacion.toDate();
+      const unDiaDespues = new Date(fechaCreacion.getTime() + 24 * 60 * 60 * 1000);
+      
+      if (new Date() > unDiaDespues) {
+        return res.status(403).json({ 
+          success: false, 
+          message: '⏳ Tu periodo de prueba de 1 día ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+        });
+      }
+    } else if (negocioData.vipHasta) {
+      // Validación normal por vipHasta (para planes asignados manualmente o sistemas antiguos)
+      const vipHasta = negocioData.vipHasta.toDate();
+      if (vipHasta <= new Date()) {
+        return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado. Contacta al administrador para renovarla.' });
+      }
     }
 
     if (categoriaPrincipal !== undefined) {
@@ -2566,11 +2649,11 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con alerta VIP segura)`);
-  console.log(`   POST /api/negocios`);
+  console.log(`   POST /api/negocios (con soporte seguro para Negocio de Prueba y App Principal)`);
   console.log(`   GET  /api/negocios/:id (con alerta VIP segura)`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
-  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
-  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró 1 día de prueba)`);
+  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró 1 día de prueba)`);
   console.log(`   POST /api/licencias/activar`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
