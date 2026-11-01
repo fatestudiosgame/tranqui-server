@@ -92,7 +92,6 @@ function duracionDiasPlan(plan) {
 // =========================================================
 async function sincronizarEstadoVip(negocioId, negocioData) {
   if (negocioData.esVip && negocioData.propietarioUsername) {
-    // Verificar si el propietario tiene una licencia vigente en la colección 'licencias'
     const licenciasSnap = await db.collection('licencias')
       .where('username', '==', negocioData.propietarioUsername)
       .get();
@@ -104,19 +103,19 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
       const licData = d.data();
       if (licData.fechaActivacion) {
         const inicio = licData.fechaActivacion.toDate().getTime();
-        const fin = inicio + duracionDiasPlan(licData.tipoPlan) * 86400000;
+        const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan); // ⭐ USAR DURACIÓN GUARDADA O CALCULARLA
+        const fin = inicio + duracion * 86400000;
         if (fin > ahoraMs) {
           tieneLicenciaVigente = true;
         }
       }
     });
 
-    // ⚠️ CAMBIO CRÍTICO: Si NO tiene licencia vigente, SOLO ALERTAMOS en consola, NO BORRAMOS
     if (!tieneLicenciaVigente) {
       console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) del usuario @${negocioData.propietarioUsername} aparece como VIP pero NO tiene licencia vigente en la colección 'licencias'. Revisa manualmente.`);
     }
   }
-  return negocioData.esVip; // Siempre devuelve el estado que ya tiene en la BD
+  return negocioData.esVip;
 }
 
 // =========================================================
@@ -214,7 +213,6 @@ const NIVELES = generarNiveles();
 // ⭐ 50 INSIGNIAS (Badges)
 // =========================================================
 const INSIGNIAS = {
-  // --- EXPLORACIÓN (1-15) ---
   primer_paso: { nombre: 'Primer Paso', emoji: '🚶', categoria: 'exploracion', descripcion: 'Tu primer check-in en la Ruta Tranqui' },
   catador: { nombre: 'Catador', emoji: '☕', categoria: 'exploracion', descripcion: '5 cafeterías visitadas' },
   foodie: { nombre: 'Foodie', emoji: '🍔', categoria: 'exploracion', descripcion: '10 restaurantes visitados' },
@@ -230,8 +228,6 @@ const INSIGNIAS = {
   madrugada: { nombre: 'Madrugada', emoji: '🦉', categoria: 'exploracion', descripcion: 'Check-in entre 12am y 5am' },
   fin_de_semana: { nombre: 'Fin de Semana', emoji: '🎉', categoria: 'exploracion', descripcion: 'Check-in un sábado o domingo' },
   viajero_frecuente: { nombre: 'Viajero Frecuente', emoji: '✈️', categoria: 'exploracion', descripcion: 'Check-ins en 50 municipios distintos' },
-
-  // --- CONSTANCIA (16-25) ---
   racha_inicial: { nombre: 'Racha Inicial', emoji: '⚡', categoria: 'constancia', descripcion: 'Streak de 3 días consecutivos' },
   en_llamas: { nombre: 'En Llamas', emoji: '🔥', categoria: 'constancia', descripcion: 'Streak de 7 días consecutivos' },
   imparable: { nombre: 'Imparable', emoji: '💪', categoria: 'constancia', descripcion: 'Streak de 15 días consecutivos' },
@@ -242,8 +238,6 @@ const INSIGNIAS = {
   nocturno: { nombre: 'Nocturno', emoji: '🌙', categoria: 'constancia', descripcion: 'Check-in después de las 10pm por 5 días' },
   semana_perfecta: { nombre: 'Semana Perfecta', emoji: '📅', categoria: 'constancia', descripcion: '7 check-ins en 7 días distintos' },
   mes_de_oro: { nombre: 'Mes de Oro', emoji: '🗓️', categoria: 'constancia', descripcion: '20 check-ins en un mismo mes' },
-
-  // --- PUNTUACIÓN Y LOGROS (26-35) ---
   primer_100: { nombre: 'Primer 100', emoji: '💯', categoria: 'puntos', descripcion: 'Alcanza 100 puntos totales' },
   primer_500: { nombre: 'Primer 500', emoji: '🥈', categoria: 'puntos', descripcion: 'Alcanza 500 puntos totales' },
   primer_1000: { nombre: 'Primer 1000', emoji: '🥇', categoria: 'puntos', descripcion: 'Alcanza 1000 puntos totales' },
@@ -254,8 +248,6 @@ const INSIGNIAS = {
   golpe_de_suerte: { nombre: 'Golpe de Suerte', emoji: '🍀', categoria: 'puntos', descripcion: 'Gana 100 puntos en un solo check-in' },
   nivel_10: { nombre: 'Nivel 10', emoji: '🔟', categoria: 'puntos', descripcion: 'Alcanza el Nivel 10' },
   nivel_50: { nombre: 'Nivel 50', emoji: '🔱', categoria: 'puntos', descripcion: 'Alcanza el Nivel 50' },
-
-  // --- ESPECIALES Y COMUNIDAD (36-50) ---
   campeon_mensual: { nombre: 'Campeón Mensual', emoji: '🏆', categoria: 'especial', descripcion: 'Fuiste #1 en el ranking mensual' },
   top_3_mensual: { nombre: 'Podio Mensual', emoji: '🥉', categoria: 'especial', descripcion: 'Quedaste en el Top 3 del ranking' },
   usuario_apklis: { nombre: 'Usuario Apklis', emoji: '🇨🇺', categoria: 'especial', descripcion: 'Te uniste a la Ruta Tranqui con Apklis' },
@@ -291,7 +283,7 @@ function obtenerTipoNegocioParaPuntos(negocioData) {
 
 function calcularPuntosCheckin(negocioData, streakActual) {
   const tipo = obtenerTipoNegocioParaPuntos(negocioData);
-  let puntos = PUNTOS_POR_TIPO[tipo] || 10;
+  let puntos = 10; // Valor por defecto si PUNTOS_POR_TIPO no está definido
 
   if (streakActual >= 15) puntos += 10;
   else if (streakActual >= 7) puntos += 5;
@@ -337,7 +329,6 @@ async function actualizarPerfilMes(perfilRef, perfilData) {
   return perfilData;
 }
 
-// ⭐ HELPER: Sumar puntos y recalcular nivel automáticamente
 async function sumarPuntosYNivel(perfilRef, perfilData, puntos) {
   const nuevosPuntosTotales = (perfilData.puntosTotales || 0) + puntos;
   const nuevosPuntosMes = (perfilData.puntosMesActual || 0) + puntos;
@@ -365,14 +356,12 @@ async function detectarInsignias(perfilRef, perfilData, checkins) {
   const streak = perfilData.streakActual || 0;
   const puntosTotales = perfilData.puntosTotales || 0;
 
-  // --- EXPLORACIÓN ---
   if (totalCheckins >= 1 && !insigniasActuales.includes('primer_paso')) nuevasInsignias.push('primer_paso');
   if (negociosVisitados >= 50 && !insigniasActuales.includes('coleccionista')) nuevasInsignias.push('coleccionista');
   if (negociosVisitados >= 100 && !insigniasActuales.includes('centurion')) nuevasInsignias.push('centurion');
   if (negociosVisitados >= 200 && !insigniasActuales.includes('magnate')) nuevasInsignias.push('magnate');
   if (negociosVisitados >= 300 && !insigniasActuales.includes('omnisciente')) nuevasInsignias.push('omnisciente');
 
-  // --- CONSTANCIA ---
   if (streak >= 3 && !insigniasActuales.includes('racha_inicial')) nuevasInsignias.push('racha_inicial');
   if (streak >= 7 && !insigniasActuales.includes('en_llamas')) nuevasInsignias.push('en_llamas');
   if (streak >= 15 && !insigniasActuales.includes('imparable')) nuevasInsignias.push('imparable');
@@ -380,7 +369,6 @@ async function detectarInsignias(perfilRef, perfilData, checkins) {
   if (streak >= 60 && !insigniasActuales.includes('leyenda_viva')) nuevasInsignias.push('leyenda_viva');
   if (streak >= 100 && !insigniasActuales.includes('eterno')) nuevasInsignias.push('eterno');
 
-  // --- PUNTUACIÓN ---
   if (puntosTotales >= 100 && !insigniasActuales.includes('primer_100')) nuevasInsignias.push('primer_100');
   if (puntosTotales >= 500 && !insigniasActuales.includes('primer_500')) nuevasInsignias.push('primer_500');
   if (puntosTotales >= 1000 && !insigniasActuales.includes('primer_1000')) nuevasInsignias.push('primer_1000');
@@ -388,7 +376,6 @@ async function detectarInsignias(perfilRef, perfilData, checkins) {
   if (puntosTotales >= 10000 && !insigniasActuales.includes('primer_10000')) nuevasInsignias.push('primer_10000');
   if (puntosTotales >= 50000 && !insigniasActuales.includes('primer_50000')) nuevasInsignias.push('primer_50000');
 
-  // Calcular nivel actual para insignias de nivel
   let nivelActual = 1;
   for (const n of NIVELES) {
     if (puntosTotales >= n.puntos) nivelActual = n.nivel;
@@ -396,7 +383,6 @@ async function detectarInsignias(perfilRef, perfilData, checkins) {
   if (nivelActual >= 10 && !insigniasActuales.includes('nivel_10')) nuevasInsignias.push('nivel_10');
   if (nivelActual >= 50 && !insigniasActuales.includes('nivel_50')) nuevasInsignias.push('nivel_50');
 
-  // --- Lógica avanzada de categorías (simplificada para no sobrecargar la DB) ---
   try {
     const categoriasVisitadas = {};
     const municipiosVisitados = new Set();
@@ -474,8 +460,6 @@ app.get('/api/negocios', async (req, res) => {
     
     for (const doc of snapshot.docs) {
       const data = doc.data();
-      
-      // ⭐ AUTO-LIMPIEZA: Verificar estado VIP (solo alerta, no modifica)
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
       
       if (esVipReal) {
@@ -541,7 +525,6 @@ app.post('/api/negocios', async (req, res) => {
       return res.status(400).json({ success: false, message: validacion.error });
     }
 
-    // ⭐ ANTI-FRAUDE RUTA TRANQUI: Límite de 3 negocios por día
     if (agregadoPor) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
@@ -564,55 +547,33 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    // ⭐ LÓGICA SEGURA: Diferenciar entre App de Catálogo y App Principal
-    
-    // 1. Verificamos si la petición viene explícitamente pidiendo ser "prueba" (desde la app de Catálogo)
-    const solicitaPrueba = req.body.tipoVip === 'prueba' || req.body.esNegocioPrueba === true;
-    
-    let tipoVipFinal = 'normal';
-    let esVipFinal = false;
-    let vipHastaFinal = null;
-    let esNegocioPruebaFinal = false;
+    let tieneLicencia = false;
+    let tipoPlanUsuario = 'bronce';
 
-    if (solicitaPrueba && agregadoPor) {
-      // ⭐ CASO A: App de Catálogo solicitando periodo de prueba de 1 día
-      esVipFinal = true;
-      tipoVipFinal = 'prueba';
-      esNegocioPruebaFinal = true;
-      const unDiaDespues = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      vipHastaFinal = admin.firestore.Timestamp.fromDate(unDiaDespues);
+    if (agregadoPor) {
+      const licenciasSnap = await db.collection('licencias')
+        .where('username', '==', agregadoPor)
+        .get();
       
-    } else {
-      // ⭐ CASO B: App Principal (o petición sin flag de prueba). Mantiene tu lógica original intacta.
-      let tieneLicencia = false;
-      let tipoPlanUsuario = 'bronce';
-
-      if (agregadoPor) {
-        const licenciasSnap = await db.collection('licencias')
-          .where('username', '==', agregadoPor)
-          .get();
-        
-        const ahoraMs = Date.now();
-        licenciasSnap.forEach((d) => {
-          const licData = d.data();
-          if (licData.fechaActivacion) {
-            const inicio = licData.fechaActivacion.toDate().getTime();
-            const fin = inicio + duracionDiasPlan(licData.tipoPlan) * 86400000;
-            if (fin > ahoraMs) {
-              tieneLicencia = true;
-              tipoPlanUsuario = licData.tipoPlan;
-            }
+      const ahoraMs = Date.now();
+      licenciasSnap.forEach((d) => {
+        const licData = d.data();
+        if (licData.fechaActivacion) {
+          const inicio = licData.fechaActivacion.toDate().getTime();
+          const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
+          const fin = inicio + duracion * 86400000;
+          if (fin > ahoraMs) {
+            tieneLicencia = true;
+            tipoPlanUsuario = licData.tipoPlan;
           }
-        });
-      }
-
-      if (tieneLicencia) {
-        esVipFinal = true;
-        tipoVipFinal = tipoPlanUsuario.toLowerCase();
-      }
+        }
+      });
     }
 
-    // 2. Construcción final del objeto con las variables seguras
+    const ahora = new Date();
+    const unDiaDespues = new Date(ahora.getTime() + 24 * 60 * 60 * 1000);
+    const duracionPrueba = 1;
+
     const negocioData = {
       nombre: nombre.trim(),
       descripcion: descripcion ? descripcion.trim() : '',
@@ -622,15 +583,13 @@ app.post('/api/negocios', async (req, res) => {
       municipio: municipio.trim(),
       categoriaPrincipal: categoriaPrincipal,
       categoriasSecundarias: categoriasSecundarias || [],
-      
-      // ⭐ Aquí usamos las variables calculadas de forma segura
-      esVip: esVipFinal,
-      tipoVip: tipoVipFinal,
+      esVip: true,
+      tipoVip: tieneLicencia ? tipoPlanUsuario.toLowerCase() : 'prueba',
       propietarioUsername: agregadoPor || 'desconocido',
-      esNegocioPrueba: esNegocioPruebaFinal,
+      esNegocioPrueba: !tieneLicencia,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-      vipHasta: vipHastaFinal,
-      
+      vipHasta: tieneLicencia ? null : admin.firestore.Timestamp.fromDate(unDiaDespues),
+      duracionDias: tieneLicencia ? duracionDiasPlan(tipoPlanUsuario) : duracionPrueba,
       fotos: [],
       agregadoPor: agregadoPor || 'desconocido',
       verificado: false,
@@ -641,7 +600,6 @@ app.post('/api/negocios', async (req, res) => {
     
     const docRef = await db.collection('negocios').add(negocioData);
 
-    // ⭐ Actualizar contador y DAR PUNTOS por agregar negocio
     if (agregadoPor) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
@@ -661,7 +619,6 @@ app.post('/api/negocios', async (req, res) => {
           }
         }
         
-        // ⭐ Lógica de puntos: Máximo 2 negocios con puntos por día
         const dioPuntosHoy = perfilData.fechaUltimoNegocioConPuntos === diaActual;
         const conteoPuntos = dioPuntosHoy ? (perfilData.negociosConPuntosHoy || 0) : 0;
 
@@ -680,7 +637,7 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    console.log(`✅ Negocio agregado con ID: ${docRef.id} (Prueba: ${esNegocioPruebaFinal})`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (Prueba: ${!tieneLicencia})`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -704,8 +661,6 @@ app.get('/api/negocios/:id', async (req, res) => {
     }
     
     const data = doc.data();
-    
-    // ⭐ AUTO-LIMPIEZA: Verificar estado VIP (solo alerta, no modifica)
     const esVipReal = await sincronizarEstadoVip(req.params.id, data);
     
     res.json({ 
@@ -763,15 +718,15 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
       return res.status(403).json({ success: false, message: 'No tienes permiso para modificar las fotos de este negocio' });
     }
 
-    // ⭐ VALIDACIÓN DE PERIODO DE PRUEBA (1 DÍA) PARA FOTOS
     if (!esAdminUser && negocioData.esNegocioPrueba === true && negocioData.fechaCreacion) {
       const fechaCreacion = negocioData.fechaCreacion.toDate();
-      const unDiaDespues = new Date(fechaCreacion.getTime() + 24 * 60 * 60 * 1000);
+      const duracion = negocioData.duracionDias || 1;
+      const finPrueba = new Date(fechaCreacion.getTime() + duracion * 24 * 60 * 60 * 1000);
       
-      if (new Date() > unDiaDespues) {
+      if (new Date() > finPrueba) {
         return res.status(403).json({ 
           success: false, 
-          message: '⏳ Tu periodo de prueba de 1 día ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
         });
       }
     }
@@ -817,7 +772,8 @@ app.post('/api/licencias/activar', async (req, res) => {
       const data = d.data();
       if (!data.fechaActivacion) return;
       const inicio = data.fechaActivacion.toDate().getTime();
-      const fin = inicio + duracionDiasPlan(data.tipoPlan) * 86400000;
+      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+      const fin = inicio + duracion * 86400000;
       if (fin > ahoraMs) {
         if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
           licenciaVigente = { id: d.id, ...data };
@@ -838,27 +794,38 @@ app.post('/api/licencias/activar', async (req, res) => {
     if (doc.exists) {
       const data = doc.data();
       const fechaActivacion = data.fechaActivacion ? data.fechaActivacion.toDate() : null;
+      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan || tipoPlan);
+      const fechaExp = fechaActivacion ? new Date(fechaActivacion.getTime() + duracion * 86400000) : null;
+      
       console.log(`🔁 Licencia ya activada: ${licencia.substring(0, 8)}... (original: ${fechaActivacion ? fechaActivacion.toISOString() : 'sin fecha'})`);
       return res.json({
         success: true,
         fechaActivacion: fechaActivacion ? fechaActivacion.toISOString() : null,
+        fechaExpiracion: fechaExp ? fechaExp.toISOString() : null, // ⭐ DEVOLVER FECHA DE EXPIRACIÓN
+        duracionDias: duracion, // ⭐ DEVOLVER DURACIÓN
         tipoPlan: data.tipoPlan,
         yaExistia: true,
       });
     }
 
     const fechaActivacion = admin.firestore.Timestamp.now();
+    const duracion = duracionDiasPlan(tipoPlan); // ⭐ CALCULAR DURACIÓN BASADA EN EL PLAN
+    const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
+
     await db.collection('licencias').doc(licencia).set({
       tipoPlan,
       username: username || 'desconocido',
       fechaActivacion,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+      duracionDias: duracion, // ⭐ GUARDAR DURACIÓN EN LA BD
     });
 
-    console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan})`);
+    console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
     res.json({
       success: true,
       fechaActivacion: fechaActivacion.toDate().toISOString(),
+      fechaExpiracion: fechaExp.toISOString(), // ⭐ DEVOLVER FECHA DE EXPIRACIÓN
+      duracionDias: duracion, // ⭐ DEVOLVER DURACIÓN
       tipoPlan,
       yaExistia: false,
     });
@@ -889,7 +856,8 @@ app.get('/api/licencias/vigente', async (req, res) => {
       const data = d.data();
       if (!data.fechaActivacion) return;
       const inicio = data.fechaActivacion.toDate().getTime();
-      const fin = inicio + duracionDiasPlan(data.tipoPlan) * 86400000;
+      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+      const fin = inicio + duracion * 86400000;
       if (fin > ahoraMs) {
         if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
           licenciaVigente = {
@@ -1145,19 +1113,18 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Este negocio no es VIP' });
     }
 
-    // ⭐ VALIDACIÓN DE PERIODO DE PRUEBA (1 DÍA)
     if (negocioData.esNegocioPrueba === true && negocioData.fechaCreacion) {
       const fechaCreacion = negocioData.fechaCreacion.toDate();
-      const unDiaDespues = new Date(fechaCreacion.getTime() + 24 * 60 * 60 * 1000);
+      const duracion = negocioData.duracionDias || 1;
+      const finPrueba = new Date(fechaCreacion.getTime() + duracion * 24 * 60 * 60 * 1000);
       
-      if (new Date() > unDiaDespues) {
+      if (new Date() > finPrueba) {
         return res.status(403).json({ 
           success: false, 
-          message: '⏳ Tu periodo de prueba de 1 día ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
         });
       }
     } else if (negocioData.vipHasta) {
-      // Validación normal por vipHasta (para planes asignados manualmente o sistemas antiguos)
       const vipHasta = negocioData.vipHasta.toDate();
       if (vipHasta <= new Date()) {
         return res.status(403).json({ success: false, message: 'La licencia VIP ha expirado. Contacta al administrador para renovarla.' });
@@ -1340,7 +1307,6 @@ app.get('/api/admin/stats', async (req, res) => {
 
       if (data.esNegocioPrueba === true) pruebas++;
 
-      // ⭐ AUTO-LIMPIEZA en stats (solo alerta, no modifica)
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
       
       if (esVipReal) {
@@ -2608,7 +2574,6 @@ app.post('/api/ruta-tranqui/reset-mensual', async (req, res) => {
 // =========================================================
 app.get('/api/mensajes-sistema', async (req, res) => {
   try {
-    // ⭐ Ordenado por fecha descendente (más reciente primero)
     const snapshot = await db.collection('mensajes_sistema')
       .orderBy('fecha', 'desc')
       .get();
@@ -2620,9 +2585,8 @@ app.get('/api/mensajes-sistema', async (req, res) => {
         id: doc.id,
         titulo: data.titulo || 'Sin título',
         mensaje: data.mensaje || '',
-        // Convertimos el Timestamp de Firestore a formato ISO string para que Dart lo entienda
         fecha: data.fecha ? data.fecha.toDate().toISOString() : new Date().toISOString(),
-        tipo: data.tipo || 'comunicado' // ej: 'actualizacion', 'evento', 'alerta'
+        tipo: data.tipo || 'comunicado'
       });
     });
 
@@ -2654,7 +2618,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró 1 día de prueba)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró 1 día de prueba)`);
-  console.log(`   POST /api/licencias/activar`);
+  console.log(`   POST /api/licencias/activar (ahora devuelve fechaExpiracion y duracionDias)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
