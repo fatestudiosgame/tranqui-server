@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.1.1';
+const SERVER_VERSION = '1.2.0-dev';
 
 const express = require('express');
 const cors = require('cors');
@@ -530,7 +530,8 @@ app.post('/api/negocios', async (req, res) => {
       return res.status(400).json({ success: false, message: validacion.error });
     }
 
-    if (agregadoPor) {
+    // ⭐ MODO DESARROLLADOR: Los Admins no tienen límite de negocios por día
+    if (agregadoPor && !esAdmin(agregadoPor)) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
       
@@ -800,7 +801,6 @@ app.post('/api/licencias/activar', async (req, res) => {
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
     // ⭐ CORRECCIÓN: Si el documento ya existe, lo ACTUALIZAMOS con el nuevo plan y duración
-    // en lugar de retornar temprano y dejar los negocios en estado de prueba.
     if (doc.exists) {
       await db.collection('licencias').doc(licencia).update({
         tipoPlan: tipoPlan,
@@ -820,7 +820,6 @@ app.post('/api/licencias/activar', async (req, res) => {
     }
 
     // ⭐ CORRECCIÓN CRÍTICA: Este bloque AHORA se ejecuta siempre, actualizando los negocios
-    // del usuario para quitarles el estado de prueba y asignarles el nuevo plan.
     const negociosRef = db.collection('negocios');
     const negociosSnapshot = await negociosRef
       .where('propietarioUsername', '==', username)
@@ -1821,7 +1820,8 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
         const dioPuntosHoy = perfilData.fechaUltimaResenaConPuntos === hoy;
         const conteo = dioPuntosHoy ? (perfilData.resenasConPuntosHoy || 0) : 0;
 
-        if (conteo < 3) {
+        // ⭐ MODO DESARROLLADOR: Admins siempre suman puntos por reseñar
+        if (conteo < 3 || esAdmin(username)) {
           await sumarPuntosYNivel(perfilRef, perfilData, 15);
           await perfilRef.update({
             fechaUltimaResenaConPuntos: hoy,
@@ -2247,7 +2247,8 @@ app.post('/api/ruta-tranqui/checkin', async (req, res) => {
     }
 
     const diaActual = obtenerDiaActual();
-    if (perfilData.ultimoDiaCheckin === diaActual) {
+    // ⭐ MODO DESARROLLADOR: Admins sin límite diario de check-ins
+    if (perfilData.ultimoDiaCheckin === diaActual && !esAdmin(username)) {
       const inicioDia = new Date();
       inicioDia.setHours(0, 0, 0, 0);
       const checkinsHoy = await perfilRef.collection('checkins')
@@ -2267,7 +2268,8 @@ app.post('/api/ruta-tranqui/checkin', async (req, res) => {
       .limit(1)
       .get();
 
-    if (!ultimoCheckinNegocio.empty) {
+    // ⭐ MODO DESARROLLADOR: Admins sin cooldown de 24h por negocio
+    if (!ultimoCheckinNegocio.empty && !esAdmin(username)) {
       const ultimoCheckin = ultimoCheckinNegocio.docs[0].data();
       const horasDesdeUltimo = (Date.now() - ultimoCheckin.timestamp.toDate().getTime()) / (1000 * 60 * 60);
       if (horasDesdeUltimo < COOLDOWN_NEGOCIO_HORAS) {
