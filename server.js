@@ -1,3 +1,8 @@
+// =========================================================
+// ⭐ VERSIÓN DEL SERVIDOR
+// =========================================================
+const SERVER_VERSION = '1.1.0';
+
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
@@ -801,15 +806,15 @@ app.post('/api/licencias/activar', async (req, res) => {
       return res.json({
         success: true,
         fechaActivacion: fechaActivacion ? fechaActivacion.toISOString() : null,
-        fechaExpiracion: fechaExp ? fechaExp.toISOString() : null, // ⭐ DEVOLVER FECHA DE EXPIRACIÓN
-        duracionDias: duracion, // ⭐ DEVOLVER DURACIÓN
+        fechaExpiracion: fechaExp ? fechaExp.toISOString() : null,
+        duracionDias: duracion,
         tipoPlan: data.tipoPlan,
         yaExistia: true,
       });
     }
 
     const fechaActivacion = admin.firestore.Timestamp.now();
-    const duracion = duracionDiasPlan(tipoPlan); // ⭐ CALCULAR DURACIÓN BASADA EN EL PLAN
+    const duracion = duracionDiasPlan(tipoPlan);
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
     await db.collection('licencias').doc(licencia).set({
@@ -817,15 +822,35 @@ app.post('/api/licencias/activar', async (req, res) => {
       username: username || 'desconocido',
       fechaActivacion,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-      duracionDias: duracion, // ⭐ GUARDAR DURACIÓN EN LA BD
+      duracionDias: duracion,
     });
+
+    // ⭐ NUEVO: Actualizar los negocios del usuario para quitarles el estado de prueba
+    const negociosRef = db.collection('negocios');
+    const negociosSnapshot = await negociosRef
+      .where('propietarioUsername', '==', username)
+      .where('esVip', '==', true)
+      .get();
+
+    if (!negociosSnapshot.empty) {
+      const batch = db.batch();
+      negociosSnapshot.docs.forEach((doc) => {
+        batch.update(doc.ref, {
+          tipoVip: tipoPlan.toLowerCase(),
+          esNegocioPrueba: false,
+          timestampVip: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios del usuario @${username} a plan ${tipoPlan}`);
+    }
 
     console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
     res.json({
       success: true,
       fechaActivacion: fechaActivacion.toDate().toISOString(),
-      fechaExpiracion: fechaExp.toISOString(), // ⭐ DEVOLVER FECHA DE EXPIRACIÓN
-      duracionDias: duracion, // ⭐ DEVOLVER DURACIÓN
+      fechaExpiracion: fechaExp.toISOString(),
+      duracionDias: duracion,
       tipoPlan,
       yaExistia: false,
     });
@@ -2602,6 +2627,7 @@ app.get('/api/mensajes-sistema', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
+    version: SERVER_VERSION,
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -2610,7 +2636,7 @@ app.get('/api/health', (req, res) => {
 // ========== INICIAR SERVIDOR ==========
 
 app.listen(port, () => {
-  console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port}`);
+  console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con alerta VIP segura)`);
   console.log(`   POST /api/negocios (con soporte seguro para Negocio de Prueba y App Principal)`);
@@ -2618,7 +2644,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró 1 día de prueba)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró 1 día de prueba)`);
-  console.log(`   POST /api/licencias/activar (ahora devuelve fechaExpiracion y duracionDias)`);
+  console.log(`   POST /api/licencias/activar (ahora actualiza automáticamente los negocios del usuario)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
