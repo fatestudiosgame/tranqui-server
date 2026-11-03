@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.1.0';
+const SERVER_VERSION = '1.1.1';
 
 const express = require('express');
 const cors = require('cors');
@@ -108,7 +108,7 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
       const licData = d.data();
       if (licData.fechaActivacion) {
         const inicio = licData.fechaActivacion.toDate().getTime();
-        const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan); // ⭐ USAR DURACIÓN GUARDADA O CALCULARLA
+        const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
         const fin = inicio + duracion * 86400000;
         if (fin > ahoraMs) {
           tieneLicenciaVigente = true;
@@ -288,7 +288,7 @@ function obtenerTipoNegocioParaPuntos(negocioData) {
 
 function calcularPuntosCheckin(negocioData, streakActual) {
   const tipo = obtenerTipoNegocioParaPuntos(negocioData);
-  let puntos = 10; // Valor por defecto si PUNTOS_POR_TIPO no está definido
+  let puntos = 10;
 
   if (streakActual >= 15) puntos += 10;
   else if (streakActual >= 7) puntos += 5;
@@ -754,7 +754,7 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
   }
 });
 
-// ========== LICENCIAS APKLIS: ACTIVAR (fecha original + anti-downgrade) ==========
+// ========== LICENCIAS APKLIS: ACTIVAR (CORREGIDO) ==========
 
 app.post('/api/licencias/activar', async (req, res) => {
   console.log('📡 POST /api/licencias/activar');
@@ -795,37 +795,32 @@ app.post('/api/licencias/activar', async (req, res) => {
     }
 
     const doc = await db.collection('licencias').doc(licencia).get();
-
-    if (doc.exists) {
-      const data = doc.data();
-      const fechaActivacion = data.fechaActivacion ? data.fechaActivacion.toDate() : null;
-      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan || tipoPlan);
-      const fechaExp = fechaActivacion ? new Date(fechaActivacion.getTime() + duracion * 86400000) : null;
-      
-      console.log(`🔁 Licencia ya activada: ${licencia.substring(0, 8)}... (original: ${fechaActivacion ? fechaActivacion.toISOString() : 'sin fecha'})`);
-      return res.json({
-        success: true,
-        fechaActivacion: fechaActivacion ? fechaActivacion.toISOString() : null,
-        fechaExpiracion: fechaExp ? fechaExp.toISOString() : null,
-        duracionDias: duracion,
-        tipoPlan: data.tipoPlan,
-        yaExistia: true,
-      });
-    }
-
-    const fechaActivacion = admin.firestore.Timestamp.now();
     const duracion = duracionDiasPlan(tipoPlan);
+    const fechaActivacion = admin.firestore.Timestamp.now();
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
-    await db.collection('licencias').doc(licencia).set({
-      tipoPlan,
-      username: username || 'desconocido',
-      fechaActivacion,
-      fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-      duracionDias: duracion,
-    });
+    // ⭐ CORRECCIÓN: Si el documento ya existe, lo ACTUALIZAMOS con el nuevo plan y duración
+    // en lugar de retornar temprano y dejar los negocios en estado de prueba.
+    if (doc.exists) {
+      await db.collection('licencias').doc(licencia).update({
+        tipoPlan: tipoPlan,
+        fechaActivacion: fechaActivacion,
+        duracionDias: duracion,
+      });
+      console.log(`🔄 Licencia actualizada a nuevo plan: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
+    } else {
+      await db.collection('licencias').doc(licencia).set({
+        tipoPlan,
+        username: username || 'desconocido',
+        fechaActivacion,
+        fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+        duracionDias: duracion,
+      });
+      console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
+    }
 
-    // ⭐ NUEVO: Actualizar los negocios del usuario para quitarles el estado de prueba
+    // ⭐ CORRECCIÓN CRÍTICA: Este bloque AHORA se ejecuta siempre, actualizando los negocios
+    // del usuario para quitarles el estado de prueba y asignarles el nuevo plan.
     const negociosRef = db.collection('negocios');
     const negociosSnapshot = await negociosRef
       .where('propietarioUsername', '==', username)
@@ -845,14 +840,13 @@ app.post('/api/licencias/activar', async (req, res) => {
       console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios del usuario @${username} a plan ${tipoPlan}`);
     }
 
-    console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
     res.json({
       success: true,
       fechaActivacion: fechaActivacion.toDate().toISOString(),
       fechaExpiracion: fechaExp.toISOString(),
       duracionDias: duracion,
       tipoPlan,
-      yaExistia: false,
+      yaExistia: doc.exists,
     });
   } catch (error) {
     console.error('❌ Error al activar licencia:', error);
@@ -2644,7 +2638,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró 1 día de prueba)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró 1 día de prueba)`);
-  console.log(`   POST /api/licencias/activar (ahora actualiza automáticamente los negocios del usuario)`);
+  console.log(`   POST /api/licencias/activar (actualiza negocios y licencias correctamente)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
