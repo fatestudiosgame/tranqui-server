@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.0-dev';
+const SERVER_VERSION = '1.2.1-secure';
 
 const express = require('express');
 const cors = require('cors');
@@ -576,9 +576,13 @@ app.post('/api/negocios', async (req, res) => {
       });
     }
 
-    const ahora = new Date();
-    const unDiaDespues = new Date(ahora.getTime() + 24 * 60 * 60 * 1000);
-    const duracionPrueba = 1;
+    // ⭐ CORRECCIÓN DE SEGURIDAD CRÍTICA:
+    // Si el usuario NO tiene licencia, el negocio se crea como NORMAL, no como "prueba".
+    const esVipFinal = tieneLicencia;
+    const tipoVipFinal = tieneLicencia ? tipoPlanUsuario.toLowerCase() : null;
+    const esNegocioPruebaFinal = false;
+    const vipHastaFinal = null;
+    const duracionDiasFinal = tieneLicencia ? duracionDiasPlan(tipoPlanUsuario) : null;
 
     const negocioData = {
       nombre: nombre.trim(),
@@ -589,13 +593,13 @@ app.post('/api/negocios', async (req, res) => {
       municipio: municipio.trim(),
       categoriaPrincipal: categoriaPrincipal,
       categoriasSecundarias: categoriasSecundarias || [],
-      esVip: true,
-      tipoVip: tieneLicencia ? tipoPlanUsuario.toLowerCase() : 'prueba',
+      esVip: esVipFinal,
+      tipoVip: tipoVipFinal,
       propietarioUsername: agregadoPor || 'desconocido',
-      esNegocioPrueba: !tieneLicencia,
+      esNegocioPrueba: esNegocioPruebaFinal,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-      vipHasta: tieneLicencia ? null : admin.firestore.Timestamp.fromDate(unDiaDespues),
-      duracionDias: tieneLicencia ? duracionDiasPlan(tipoPlanUsuario) : duracionPrueba,
+      vipHasta: vipHastaFinal,
+      duracionDias: duracionDiasFinal,
       fotos: [],
       agregadoPor: agregadoPor || 'desconocido',
       verificado: false,
@@ -643,7 +647,7 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    console.log(`✅ Negocio agregado con ID: ${docRef.id} (Prueba: ${!tieneLicencia})`);
+    console.log(`✅ Negocio agregado con ID: ${docRef.id} (VIP: ${tieneLicencia})`);
     res.status(201).json({
       success: true,
       message: 'Negocio agregado correctamente',
@@ -800,7 +804,6 @@ app.post('/api/licencias/activar', async (req, res) => {
     const fechaActivacion = admin.firestore.Timestamp.now();
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
-    // ⭐ CORRECCIÓN: Si el documento ya existe, lo ACTUALIZAMOS con el nuevo plan y duración
     if (doc.exists) {
       await db.collection('licencias').doc(licencia).update({
         tipoPlan: tipoPlan,
@@ -819,7 +822,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
     }
 
-    // ⭐ CORRECCIÓN CRÍTICA: Este bloque AHORA se ejecuta siempre, actualizando los negocios
     const negociosRef = db.collection('negocios');
     const negociosSnapshot = await negociosRef
       .where('propietarioUsername', '==', username)
@@ -1027,6 +1029,30 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     }
 
     const negocioData = negocioDoc.data();
+
+    // ⭐ NUEVA VERIFICACIÓN DE SEGURIDAD: Validar que el usuario tenga una licencia activa
+    let tieneLicenciaParaReclamar = false;
+    const licenciasSnap = await db.collection('licencias').where('username', '==', username).get();
+    const ahoraMs = Date.now();
+    
+    licenciasSnap.forEach((d) => {
+      const licData = d.data();
+      if (licData.fechaActivacion) {
+        const inicio = licData.fechaActivacion.toDate().getTime();
+        const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
+        const fin = inicio + duracion * 86400000;
+        if (fin > ahoraMs) {
+          tieneLicenciaParaReclamar = true;
+        }
+      }
+    });
+
+    if (!tieneLicenciaParaReclamar && !esAdmin(username)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'No tienes una licencia VIP activa. Adquiere un plan para reclamar negocios.' 
+      });
+    }
 
     if (negocioData.esVip && negocioData.propietarioUsername && negocioData.propietarioUsername !== username) {
       const vipHastaActual = negocioData.vipHasta?.toDate();
@@ -1820,7 +1846,6 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
         const dioPuntosHoy = perfilData.fechaUltimaResenaConPuntos === hoy;
         const conteo = dioPuntosHoy ? (perfilData.resenasConPuntosHoy || 0) : 0;
 
-        // ⭐ MODO DESARROLLADOR: Admins siempre suman puntos por reseñar
         if (conteo < 3 || esAdmin(username)) {
           await sumarPuntosYNivel(perfilRef, perfilData, 15);
           await perfilRef.update({
@@ -2247,7 +2272,6 @@ app.post('/api/ruta-tranqui/checkin', async (req, res) => {
     }
 
     const diaActual = obtenerDiaActual();
-    // ⭐ MODO DESARROLLADOR: Admins sin límite diario de check-ins
     if (perfilData.ultimoDiaCheckin === diaActual && !esAdmin(username)) {
       const inicioDia = new Date();
       inicioDia.setHours(0, 0, 0, 0);
@@ -2268,7 +2292,6 @@ app.post('/api/ruta-tranqui/checkin', async (req, res) => {
       .limit(1)
       .get();
 
-    // ⭐ MODO DESARROLLADOR: Admins sin cooldown de 24h por negocio
     if (!ultimoCheckinNegocio.empty && !esAdmin(username)) {
       const ultimoCheckin = ultimoCheckinNegocio.docs[0].data();
       const horasDesdeUltimo = (Date.now() - ultimoCheckin.timestamp.toDate().getTime()) / (1000 * 60 * 60);
@@ -2635,11 +2658,11 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con alerta VIP segura)`);
-  console.log(`   POST /api/negocios (con soporte seguro para Negocio de Prueba y App Principal)`);
+  console.log(`   POST /api/negocios (con soporte seguro: sin negocios "prueba" automáticos)`);
   console.log(`   GET  /api/negocios/:id (con alerta VIP segura)`);
-  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (dueño reclama)`);
-  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró 1 día de prueba)`);
-  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró 1 día de prueba)`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (valida licencia activa obligatoria)`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
+  console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
   console.log(`   POST /api/licencias/activar (actualiza negocios y licencias correctamente)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
