@@ -89,7 +89,7 @@ function duracionDiasPlan(plan) {
   if (r === 3) return 360;
   if (r === 2) return 180;
   if (r === 1) return 30;
-  return 30; // Por defecto o para 'prueba'
+  return 30; // Por defecto
 }
 
 // =========================================================
