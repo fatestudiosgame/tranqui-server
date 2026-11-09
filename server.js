@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.1-secure';
+const SERVER_VERSION = '1.2.2-sync';
 
 const express = require('express');
 const cors = require('cors');
@@ -89,7 +89,59 @@ function duracionDiasPlan(plan) {
   if (r === 3) return 360;
   if (r === 2) return 180;
   if (r === 1) return 30;
-  return 30; // Por defecto
+  return 30; // Por defecto o para 'prueba'
+}
+
+// =========================================================
+// ⭐ HELPER: Sincronizar negocios dentro del documento de la licencia
+// =========================================================
+async function sincronizarNegociosEnLicencia(username) {
+  try {
+    // 1. Buscar la licencia activa del usuario
+    const ahoraMs = Date.now();
+    const licenciasSnap = await db.collection('licencias')
+      .where('username', '==', username)
+      .get();
+
+    let licenciaActivaId = null;
+    
+    for (const doc of licenciasSnap.docs) {
+      const data = doc.data();
+      if (data.fechaActivacion) {
+        const inicio = data.fechaActivacion.toDate().getTime();
+        const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+        const fin = inicio + duracion * 86400000;
+        if (fin > ahoraMs) {
+          licenciaActivaId = doc.id;
+          break; // Tomamos la primera licencia vigente que encontremos
+        }
+      }
+    }
+
+    // Si no hay licencia activa, no hacemos nada
+    if (!licenciaActivaId) return;
+
+    // 2. Buscar todos los negocios VIP actuales de este usuario
+    const negociosSnap = await db.collection('negocios')
+      .where('propietarioUsername', '==', username)
+      .where('esVip', '==', true)
+      .get();
+
+    // 3. Crear el arreglo de objetos { id, nombre }
+    const negociosAsociados = negociosSnap.docs.map(doc => ({
+      id: doc.id,
+      nombre: doc.data().nombre || 'Sin nombre'
+    }));
+
+    // 4. Actualizar el documento de la licencia con este arreglo
+    await db.collection('licencias').doc(licenciaActivaId).update({
+      negociosAsociados: negociosAsociados
+    });
+    
+    console.log(`✅ Licencia ${licenciaActivaId} sincronizada con ${negociosAsociados.length} negocios.`);
+  } catch (error) {
+    console.error('❌ Error al sincronizar negocios en licencia:', error);
+  }
 }
 
 // =========================================================
@@ -647,6 +699,11 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
+    // ⭐ NUEVO: Si el usuario tiene licencia, actualizar el arreglo en la licencia
+    if (tieneLicencia && agregadoPor) {
+      await sincronizarNegociosEnLicencia(agregadoPor);
+    }
+
     console.log(`✅ Negocio agregado con ID: ${docRef.id} (VIP: ${tieneLicencia})`);
     res.status(201).json({
       success: true,
@@ -840,6 +897,9 @@ app.post('/api/licencias/activar', async (req, res) => {
       await batch.commit();
       console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios del usuario @${username} a plan ${tipoPlan}`);
     }
+
+    // ⭐ NUEVO: Sincronizar los negocios dentro del documento de la licencia
+    await sincronizarNegociosEnLicencia(username);
 
     res.json({
       success: true,
