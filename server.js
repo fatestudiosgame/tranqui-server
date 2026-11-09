@@ -2773,7 +2773,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (licencia activa + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
-  console.log(`   POST /api/licencias/activar ⭐ ID único por usuario (${licencia}_${username})`);
+  console.log(`   POST /api/licencias/activar ⭐ ID único por usuario (licencia_username)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
