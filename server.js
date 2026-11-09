@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.2-sync';
+const SERVER_VERSION = '1.2.3-unique-licensing';
 
 const express = require('express');
 const cors = require('cors');
@@ -89,7 +89,14 @@ function duracionDiasPlan(plan) {
   if (r === 3) return 360;
   if (r === 2) return 180;
   if (r === 1) return 30;
-  return 30; // Por defecto o para 'prueba'
+  return 30; // Por defecto
+}
+
+// =========================================================
+// ⭐ HELPER: Generar ID único de licencia
+// =========================================================
+function generarIdLicencia(licencia, username) {
+  return `${licencia}_${username}`;
 }
 
 // =========================================================
@@ -97,14 +104,13 @@ function duracionDiasPlan(plan) {
 // =========================================================
 async function sincronizarNegociosEnLicencia(username) {
   try {
-    // 1. Buscar la licencia activa del usuario
     const ahoraMs = Date.now();
     const licenciasSnap = await db.collection('licencias')
       .where('username', '==', username)
       .get();
 
     let licenciaActivaId = null;
-    
+
     for (const doc of licenciasSnap.docs) {
       const data = doc.data();
       if (data.fechaActivacion) {
@@ -113,31 +119,27 @@ async function sincronizarNegociosEnLicencia(username) {
         const fin = inicio + duracion * 86400000;
         if (fin > ahoraMs) {
           licenciaActivaId = doc.id;
-          break; // Tomamos la primera licencia vigente que encontremos
+          break;
         }
       }
     }
 
-    // Si no hay licencia activa, no hacemos nada
     if (!licenciaActivaId) return;
 
-    // 2. Buscar todos los negocios VIP actuales de este usuario
     const negociosSnap = await db.collection('negocios')
       .where('propietarioUsername', '==', username)
       .where('esVip', '==', true)
       .get();
 
-    // 3. Crear el arreglo de objetos { id, nombre }
     const negociosAsociados = negociosSnap.docs.map(doc => ({
       id: doc.id,
       nombre: doc.data().nombre || 'Sin nombre'
     }));
 
-    // 4. Actualizar el documento de la licencia con este arreglo
     await db.collection('licencias').doc(licenciaActivaId).update({
       negociosAsociados: negociosAsociados
     });
-    
+
     console.log(`✅ Licencia ${licenciaActivaId} sincronizada con ${negociosAsociados.length} negocios.`);
   } catch (error) {
     console.error('❌ Error al sincronizar negocios en licencia:', error);
@@ -152,10 +154,10 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
     const licenciasSnap = await db.collection('licencias')
       .where('username', '==', negocioData.propietarioUsername)
       .get();
-    
+
     let tieneLicenciaVigente = false;
     const ahoraMs = Date.now();
-    
+
     licenciasSnap.forEach((d) => {
       const licData = d.data();
       if (licData.fechaActivacion) {
@@ -251,14 +253,14 @@ function generarNiveles() {
     'Aprendiz', 'Caminante', 'Explorador', 'Conocedor', 'Experto Local',
     'Veterano', 'Maestro', 'Leyenda', 'Mito', 'Divino'
   ];
-  
+
   for (let i = 2; i <= 100; i++) {
     const puntos = Math.floor(80 * Math.pow(i, 1.6));
     const tituloIdx = Math.min(Math.floor((i - 1) / 10), titulos.length - 1);
-    niveles.push({ 
-      nivel: i, 
-      nombre: i === 100 ? '⭐ Dios de Tranqui' : `${titulos[tituloIdx]} Nv.${i}`, 
-      puntos: puntos 
+    niveles.push({
+      nivel: i,
+      nombre: i === 100 ? '⭐ Dios de Tranqui' : `${titulos[tituloIdx]} Nv.${i}`,
+      puntos: puntos
     });
   }
   return niveles;
@@ -511,31 +513,30 @@ app.get('/api/negocios', async (req, res) => {
   try {
     const snapshot = await db.collection('negocios').orderBy('timestamp', 'desc').get();
     const negocios = [];
-    
-    const ahora = new Date();
+
     let contadorVip = 0;
-    
+
     for (const doc of snapshot.docs) {
       const data = doc.data();
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
-      
+
       if (esVipReal) {
         contadorVip++;
       }
-      
-      negocios.push({ 
-        id: doc.id, 
+
+      negocios.push({
+        id: doc.id,
         ...data,
         esVip: esVipReal
       });
     }
-    
+
     negocios.sort((a, b) => {
       if (a.esVip && !b.esVip) return -1;
       if (!a.esVip && b.esVip) return 1;
       return 0;
     });
-    
+
     console.log(`✅ Devolviendo ${negocios.length} negocios (${contadorVip} VIP vigentes)`);
     res.json({ success: true, data: negocios });
   } catch (error) {
@@ -563,7 +564,7 @@ app.post('/api/negocios', async (req, res) => {
       agregadoPor,
     } = req.body;
     console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor });
-    
+
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
     }
@@ -576,7 +577,7 @@ app.post('/api/negocios', async (req, res) => {
     if (!municipio || municipio.trim() === '') {
       return res.status(400).json({ success: false, message: 'El municipio es obligatorio' });
     }
-    
+
     const validacion = validarCategorias(categoriaPrincipal, categoriasSecundarias);
     if (!validacion.valido) {
       return res.status(400).json({ success: false, message: validacion.error });
@@ -586,15 +587,15 @@ app.post('/api/negocios', async (req, res) => {
     if (agregadoPor && !esAdmin(agregadoPor)) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
-      
+
       if (perfilDoc.exists) {
         const perfilData = perfilDoc.data();
         const diaActual = obtenerDiaActual();
-        
+
         if (perfilData.fechaUltimoNegocioAgregado) {
           const fechaUltimo = perfilData.fechaUltimoNegocioAgregado.toDate();
           const diaUltimo = `${fechaUltimo.getFullYear()}-${String(fechaUltimo.getMonth() + 1).padStart(2, '0')}-${String(fechaUltimo.getDate()).padStart(2, '0')}`;
-          
+
           if (diaUltimo === diaActual && (perfilData.negociosAgregadosHoy || 0) >= LIMITE_NEGOCIOS_POR_DIA) {
             return res.status(403).json({
               success: false,
@@ -612,7 +613,7 @@ app.post('/api/negocios', async (req, res) => {
       const licenciasSnap = await db.collection('licencias')
         .where('username', '==', agregadoPor)
         .get();
-      
+
       const ahoraMs = Date.now();
       licenciasSnap.forEach((d) => {
         const licData = d.data();
@@ -628,8 +629,6 @@ app.post('/api/negocios', async (req, res) => {
       });
     }
 
-    // ⭐ CORRECCIÓN DE SEGURIDAD CRÍTICA:
-    // Si el usuario NO tiene licencia, el negocio se crea como NORMAL, no como "prueba".
     const esVipFinal = tieneLicencia;
     const tipoVipFinal = tieneLicencia ? tipoPlanUsuario.toLowerCase() : null;
     const esNegocioPruebaFinal = false;
@@ -659,20 +658,20 @@ app.post('/api/negocios', async (req, res) => {
       totalCheckins: 0,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
-    
+
     const docRef = await db.collection('negocios').add(negocioData);
 
     if (agregadoPor) {
       const perfilRef = db.collection('perfiles_usuarios').doc(agregadoPor);
       const perfilDoc = await perfilRef.get();
       const diaActual = obtenerDiaActual();
-      
+
       if (perfilDoc.exists) {
         const perfilData = perfilDoc.data();
         const fechaUltimo = perfilData.fechaUltimoNegocioAgregado
           ? perfilData.fechaUltimoNegocioAgregado.toDate()
           : null;
-        
+
         let nuevoContador = (perfilData.negociosAgregadosHoy || 0) + 1;
         if (fechaUltimo) {
           const diaUltimo = `${fechaUltimo.getFullYear()}-${String(fechaUltimo.getMonth() + 1).padStart(2, '0')}-${String(fechaUltimo.getDate()).padStart(2, '0')}`;
@@ -680,7 +679,7 @@ app.post('/api/negocios', async (req, res) => {
             nuevoContador = 1;
           }
         }
-        
+
         const dioPuntosHoy = perfilData.fechaUltimoNegocioConPuntos === diaActual;
         const conteoPuntos = dioPuntosHoy ? (perfilData.negociosConPuntosHoy || 0) : 0;
 
@@ -699,7 +698,6 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    // ⭐ NUEVO: Si el usuario tiene licencia, actualizar el arreglo en la licencia
     if (tieneLicencia && agregadoPor) {
       await sincronizarNegociosEnLicencia(agregadoPor);
     }
@@ -726,17 +724,17 @@ app.get('/api/negocios/:id', async (req, res) => {
     if (!doc.exists) {
       return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
-    
+
     const data = doc.data();
     const esVipReal = await sincronizarEstadoVip(req.params.id, data);
-    
-    res.json({ 
-      success: true, 
-      data: { 
-        id: doc.id, 
+
+    res.json({
+      success: true,
+      data: {
+        id: doc.id,
         ...data,
         esVip: esVipReal
-      } 
+      }
     });
   } catch (error) {
     console.error('Error al obtener negocio:', error);
@@ -789,11 +787,11 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
       const fechaCreacion = negocioData.fechaCreacion.toDate();
       const duracion = negocioData.duracionDias || 1;
       const finPrueba = new Date(fechaCreacion.getTime() + duracion * 24 * 60 * 60 * 1000);
-      
+
       if (new Date() > finPrueba) {
-        return res.status(403).json({ 
-          success: false, 
-          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+        return res.status(403).json({
+          success: false,
+          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.'
         });
       }
     }
@@ -816,7 +814,7 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
   }
 });
 
-// ========== LICENCIAS APKLIS: ACTIVAR (CORREGIDO) ==========
+// ========== LICENCIAS APKLIS: ACTIVAR (CON ID ÚNICO POR USUARIO) ==========
 
 app.post('/api/licencias/activar', async (req, res) => {
   console.log('📡 POST /api/licencias/activar');
@@ -826,6 +824,10 @@ app.post('/api/licencias/activar', async (req, res) => {
     if (!licencia || !tipoPlan) {
       return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan' });
     }
+
+    // ⭐ NUEVO: ID único por usuario (formato: licencia_username)
+    const licenciaId = generarIdLicencia(licencia, username);
+    console.log(`🔑 ID de licencia generado: ${licenciaId}`);
 
     const ahoraMs = Date.now();
     let licenciaVigente = null;
@@ -856,27 +858,28 @@ app.post('/api/licencias/activar', async (req, res) => {
       });
     }
 
-    const doc = await db.collection('licencias').doc(licencia).get();
+    const doc = await db.collection('licencias').doc(licenciaId).get();
     const duracion = duracionDiasPlan(tipoPlan);
     const fechaActivacion = admin.firestore.Timestamp.now();
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
     if (doc.exists) {
-      await db.collection('licencias').doc(licencia).update({
+      await db.collection('licencias').doc(licenciaId).update({
         tipoPlan: tipoPlan,
         fechaActivacion: fechaActivacion,
         duracionDias: duracion,
       });
-      console.log(`🔄 Licencia actualizada a nuevo plan: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
+      console.log(`🔄 Licencia actualizada a nuevo plan: ${licenciaId.substring(0, 15)}... (${tipoPlan}, ${duracion} días)`);
     } else {
-      await db.collection('licencias').doc(licencia).set({
+      await db.collection('licencias').doc(licenciaId).set({
         tipoPlan,
         username: username || 'desconocido',
+        licenciaOriginal: licencia, // ⭐ Guardamos el UUID original de Apklis para referencia
         fechaActivacion,
         fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
         duracionDias: duracion,
       });
-      console.log(`✅ Licencia activada por primera vez: ${licencia.substring(0, 8)}... (${tipoPlan}, ${duracion} días)`);
+      console.log(`✅ Licencia activada por primera vez: ${licenciaId.substring(0, 15)}... (${tipoPlan}, ${duracion} días)`);
     }
 
     const negociosRef = db.collection('negocios');
@@ -891,6 +894,7 @@ app.post('/api/licencias/activar', async (req, res) => {
         batch.update(doc.ref, {
           tipoVip: tipoPlan.toLowerCase(),
           esNegocioPrueba: false,
+          vipHasta: admin.firestore.Timestamp.fromDate(fechaExp),
           timestampVip: admin.firestore.FieldValue.serverTimestamp(),
         });
       });
@@ -898,7 +902,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios del usuario @${username} a plan ${tipoPlan}`);
     }
 
-    // ⭐ NUEVO: Sincronizar los negocios dentro del documento de la licencia
     await sincronizarNegociosEnLicencia(username);
 
     res.json({
@@ -947,6 +950,7 @@ app.get('/api/licencias/vigente', async (req, res) => {
             fechaActivacion: data.fechaActivacion.toDate().toISOString(),
             fechaExpiracion: new Date(fin).toISOString(),
             diasRestantes: Math.ceil((fin - ahoraMs) / 86400000),
+            negociosAsociados: data.negociosAsociados || [],
           };
         }
       }
@@ -1076,7 +1080,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/reclamar`);
   try {
     const { username, tipoVip, vipHasta } = req.body;
-    
+
     if (!username || !tipoVip || !vipHasta) {
       return res.status(400).json({ success: false, message: 'Faltan campos: username, tipoVip, vipHasta' });
     }
@@ -1090,11 +1094,11 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    // ⭐ NUEVA VERIFICACIÓN DE SEGURIDAD: Validar que el usuario tenga una licencia activa
+    // ⭐ SEGURIDAD 1: Validar que el usuario tenga una licencia activa
     let tieneLicenciaParaReclamar = false;
     const licenciasSnap = await db.collection('licencias').where('username', '==', username).get();
     const ahoraMs = Date.now();
-    
+
     licenciasSnap.forEach((d) => {
       const licData = d.data();
       if (licData.fechaActivacion) {
@@ -1108,19 +1112,21 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     });
 
     if (!tieneLicenciaParaReclamar && !esAdmin(username)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'No tienes una licencia VIP activa. Adquiere un plan para reclamar negocios.' 
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes una licencia VIP activa. Adquiere un plan para reclamar negocios.'
       });
     }
 
-    if (negocioData.esVip && negocioData.propietarioUsername && negocioData.propietarioUsername !== username) {
-      const vipHastaActual = negocioData.vipHasta?.toDate();
-      const ahora = new Date();
-      
-      if (vipHastaActual && vipHastaActual > ahora) {
-        return res.status(409).json({ success: false, message: `Este negocio ya fue reclamado por @${negocioData.propietarioUsername}` });
-      }
+    // ⭐ SEGURIDAD 2: Si ya tiene dueño registrado y no eres tú, bloquear
+    if (negocioData.propietarioUsername &&
+        negocioData.propietarioUsername !== 'desconocido' &&
+        negocioData.propietarioUsername !== username &&
+        !esAdmin(username)) {
+      return res.status(409).json({
+        success: false,
+        message: `Este negocio ya tiene un propietario registrado (@${negocioData.propietarioUsername}). No puedes reclamarlo.`
+      });
     }
 
     const snapshot = await db.collection('negocios')
@@ -1134,8 +1140,8 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     snapshot.forEach(doc => {
       const data = doc.data();
       if (data.vipHasta) {
-        const vipHasta = data.vipHasta.toDate();
-        if (vipHasta > ahora) {
+        const vipHastaDoc = data.vipHasta.toDate();
+        if (vipHastaDoc > ahora) {
           negociosVigentes++;
           idsVigentes.push(doc.id);
         }
@@ -1150,8 +1156,8 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     else if (t.includes('prueba')) limite = 1;
 
     const esMismoNegocio = idsVigentes.includes(req.params.id);
-    
-    if (!esMismoNegocio && negociosVigentes >= limite) {
+
+    if (!esMismoNegocio && negociosVigentes >= limite && !esAdmin(username)) {
       return res.status(403).json({ success: false, message: `Has alcanzado el límite de ${limite} negocio(s) para el plan ${tipoVip}. Contacta al administrador.` });
     }
 
@@ -1159,9 +1165,12 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
       esVip: true,
       tipoVip: tipoVip.toLowerCase(),
       propietarioUsername: username,
+      esNegocioPrueba: false,
       vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
       timestampVip: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    await sincronizarNegociosEnLicencia(username);
 
     console.log(`✅ Negocio ${req.params.id} reclamado por @${username} (Plan: ${tipoVip})`);
     dispararGeneracionPaginas('reclamo ' + req.params.id);
@@ -1209,7 +1218,7 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    if (negocioData.propietarioUsername !== username) {
+    if (negocioData.propietarioUsername !== username && !esAdmin(username)) {
       return res.status(403).json({ success: false, message: 'No tienes permiso para editar este negocio' });
     }
 
@@ -1221,11 +1230,11 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       const fechaCreacion = negocioData.fechaCreacion.toDate();
       const duracion = negocioData.duracionDias || 1;
       const finPrueba = new Date(fechaCreacion.getTime() + duracion * 24 * 60 * 60 * 1000);
-      
+
       if (new Date() > finPrueba) {
-        return res.status(403).json({ 
-          success: false, 
-          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.' 
+        return res.status(403).json({
+          success: false,
+          message: '⏳ Tu periodo de prueba ha expirado. Adquiere un plan VIP para seguir editando y destacar tu negocio.'
         });
       }
     } else if (negocioData.vipHasta) {
@@ -1256,6 +1265,10 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
     if (categoriasSecundarias !== undefined) updateData.categoriasSecundarias = categoriasSecundarias;
 
     await negocioRef.update(updateData);
+
+    if (nombre !== undefined) {
+      await sincronizarNegociosEnLicencia(negocioData.propietarioUsername);
+    }
 
     console.log(`✅ Negocio ${req.params.id} actualizado por @${username}`);
     dispararGeneracionPaginas('vip-edit ' + req.params.id);
@@ -1333,6 +1346,13 @@ app.put('/api/admin/negocios/:id', async (req, res) => {
 
     await negocioRef.update(updateData);
 
+    if (nombre !== undefined) {
+      const nd = negocioDoc.data();
+      if (nd.propietarioUsername) {
+        await sincronizarNegociosEnLicencia(nd.propietarioUsername);
+      }
+    }
+
     console.log(`✅ [ADMIN] Negocio ${req.params.id} editado por @${adminUsername}`);
     dispararGeneracionPaginas('admin-edit ' + req.params.id);
     res.json({ success: true, message: 'Negocio actualizado por administrador' });
@@ -1365,17 +1385,23 @@ app.delete('/api/admin/negocios/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
 
+    const propietarioAfectado = negocioDoc.data().propietarioUsername;
+
     const comentariosRef = negocioRef.collection('comentarios');
     const comentariosSnap = await comentariosRef.get();
     const batch = db.batch();
     comentariosSnap.forEach(doc => batch.delete(doc.ref));
-    
+
     const catalogoRef = negocioRef.collection('catalogo');
     const catalogoSnap = await catalogoRef.get();
     catalogoSnap.forEach(doc => batch.delete(doc.ref));
-    
+
     batch.delete(negocioRef);
     await batch.commit();
+
+    if (propietarioAfectado) {
+      await sincronizarNegociosEnLicencia(propietarioAfectado);
+    }
 
     console.log(`✅ [ADMIN] Negocio ${req.params.id} borrado permanentemente por @${adminUsername}`);
     dispararGeneracionPaginas('borrado ' + req.params.id);
@@ -1400,7 +1426,6 @@ app.get('/api/admin/stats', async (req, res) => {
     const negociosSnap = await db.collection('negocios').get();
     const totalNegocios = negociosSnap.size;
 
-    const ahora = new Date();
     let vipVigentes = 0;
     let pruebas = 0;
     const porCategoria = {};
@@ -1412,7 +1437,7 @@ app.get('/api/admin/stats', async (req, res) => {
       if (data.esNegocioPrueba === true) pruebas++;
 
       const esVipReal = await sincronizarEstadoVip(doc.id, data);
-      
+
       if (esVipReal) {
         vipVigentes++;
         const plan = data.tipoVip || 'desconocido';
@@ -1466,6 +1491,9 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
 
+    const propietarioAnterior = negocioDoc.data().propietarioUsername;
+    let propietarioAfectado = propietarioAnterior;
+
     let updateData = {
       timestampAdminVipUpdate: admin.firestore.FieldValue.serverTimestamp(),
       adminQueModificoVip: adminUsername,
@@ -1475,15 +1503,17 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
       if (!tipoVip || !vipHasta) {
         return res.status(400).json({ success: false, message: 'Para reclamar se requiere: tipoVip, vipHasta' });
       }
-      
+
       let propietarioFinal = propietarioUsername || adminUsername;
       let esPrueba = false;
-      
+
       if (esNegocioPrueba === true) {
         propietarioFinal = `${adminUsername}_usuario_test`;
         esPrueba = true;
       }
-      
+
+      propietarioAfectado = propietarioFinal;
+
       updateData = {
         ...updateData,
         esVip: true,
@@ -1492,7 +1522,6 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         vipHasta: admin.firestore.Timestamp.fromDate(new Date(vipHasta)),
         esNegocioPrueba: esPrueba,
         creadoPorAdmin: esPrueba ? adminUsername : null,
-        fotos: [],
       };
     } else if (accion === 'liberar') {
       updateData = {
@@ -1504,7 +1533,6 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
         descripcionVip: null,
         esNegocioPrueba: false,
         creadoPorAdmin: null,
-        fotos: [],
       };
     } else if (accion === 'extender') {
       if (!vipHasta) {
@@ -1518,12 +1546,12 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
       if (!tipoVip) {
         return res.status(400).json({ success: false, message: 'Para cambiar tipo se requiere: tipoVip' });
       }
-      
+
       const negocioActual = negocioDoc.data();
       if (!negocioActual.esVip) {
         return res.status(400).json({ success: false, message: 'El negocio no es VIP actualmente' });
       }
-      
+
       updateData = {
         ...updateData,
         tipoVip: tipoVip.toLowerCase(),
@@ -1533,6 +1561,11 @@ app.put('/api/admin/negocios/:id/vip-status', async (req, res) => {
     }
 
     await negocioRef.update(updateData);
+
+    if (propietarioAnterior) await sincronizarNegociosEnLicencia(propietarioAnterior);
+    if (propietarioAfectado && propietarioAfectado !== propietarioAnterior) {
+      await sincronizarNegociosEnLicencia(propietarioAfectado);
+    }
 
     console.log(`✅ [ADMIN] VIP status cambiado por @${adminUsername} (${accion})`);
     if (accion === 'reclamar' || accion === 'liberar') {
@@ -1556,6 +1589,23 @@ app.get('/api/admin/verificar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Falta username' });
     }
     res.json({ success: true, esAdmin: esAdmin(username) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ⭐ Endpoint manual para forzar sincronización de una licencia
+app.post('/api/admin/sincronizar-licencia', async (req, res) => {
+  try {
+    const { adminUsername, username } = req.body;
+    if (!esAdmin(adminUsername)) {
+      return res.status(403).json({ success: false, message: 'No autorizado' });
+    }
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Falta username' });
+    }
+    await sincronizarNegociosEnLicencia(username);
+    res.json({ success: true, message: `Licencia de @${username} sincronizada` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1681,7 +1731,7 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
     };
 
     const docRef = await negocioRef.collection('catalogo').add(productoData);
-    
+
     console.log(`✅ Producto agregado al catálogo de ${req.params.negocioId}: ${docRef.id} (${nombre})`);
     dispararGeneracionPaginas('catalogo ' + req.params.negocioId);
     res.status(201).json({
@@ -1859,11 +1909,11 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
 
     const negocioRef = db.collection('negocios').doc(req.params.negocioId);
     const negocioDoc = await negocioRef.get();
-    
+
     if (!negocioDoc.exists) {
-        return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
+      return res.status(404).json({ success: false, message: 'Negocio no encontrado' });
     }
-    
+
     const negocioData = negocioDoc.data();
     if (username && negocioData.propietarioUsername === username) {
       return res.status(403).json({ success: false, message: 'No puedes reseñar tu propio negocio.' });
@@ -1899,7 +1949,7 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
     if (username && texto.trim().length >= 15) {
       const perfilRef = db.collection('perfiles_usuarios').doc(username);
       const perfilDoc = await perfilRef.get();
-      
+
       if (perfilDoc.exists) {
         const perfilData = perfilDoc.data();
         const hoy = obtenerDiaActual();
@@ -1918,7 +1968,7 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
         }
       }
     } else if (username) {
-        console.log(`⚠️ @${username} comentó, pero no ganó puntos (menos de 15 caracteres).`);
+      console.log(`⚠️ @${username} comentó, pero no ganó puntos (menos de 15 caracteres).`);
     }
 
     console.log(`✅ Comentario agregado con ID: ${docRef.id}`);
@@ -1940,8 +1990,8 @@ app.post('/api/comentarios/:negocioId', async (req, res) => {
 app.delete('/api/comentarios/:negocioId/:comentarioId', async (req, res) => {
   console.log(`📡 DELETE /api/comentarios/${req.params.negocioId}/${req.params.comentarioId}`);
   try {
-    const { username, adminUsername } = req.body; 
-    
+    const { username, adminUsername } = req.body;
+
     const negocioRef = db.collection('negocios').doc(req.params.negocioId);
     const negocioDoc = await negocioRef.get();
 
@@ -2112,13 +2162,13 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
     });
 
     if (tokens.length === 0) {
-      return res.json({ 
-        success: true, 
-        enviados: 0, 
-        fallos: 0, 
-        total: 0, 
+      return res.json({
+        success: true,
+        enviados: 0,
+        fallos: 0,
+        total: 0,
         anuncioId: anuncioDoc.id,
-        mensaje: 'No hay dispositivos registrados. El anuncio se guardó para cuando abran la app.' 
+        mensaje: 'No hay dispositivos registrados. El anuncio se guardó para cuando abran la app.'
       });
     }
 
@@ -2130,7 +2180,7 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
 
     for (let i = 0; i < tokens.length; i += batchSize) {
       const batch = tokens.slice(i, i + batchSize);
-      
+
       const message = {
         notification: {
           title: titulo,
@@ -2154,13 +2204,13 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
           response.responses.forEach((resp, idx) => {
             if (!resp.success) {
               const error = resp.error;
-              if (error && (error.code === 'messaging/registration-token-not-registered' || 
+              if (error && (error.code === 'messaging/registration-token-not-registered' ||
                             error.code === 'messaging/invalid-registration-token')) {
                 tokensInvalidos.push(batch[idx]);
               }
             }
           });
-          
+
           if (tokensInvalidos.length > 0) {
             const deleteBatch = db.batch();
             tokensInvalidos.forEach(t => {
@@ -2176,10 +2226,10 @@ app.post('/api/notificaciones/enviar-todos', async (req, res) => {
     }
 
     console.log(`✅ Push enviado: ${totalEnviados} exitosos, ${totalFallos} fallos`);
-    
-    res.json({ 
-      success: true, 
-      enviados: totalEnviados, 
+
+    res.json({
+      success: true,
+      enviados: totalEnviados,
       fallos: totalFallos,
       total: tokens.length,
       anuncioId: anuncioDoc.id
@@ -2203,9 +2253,9 @@ app.get('/api/notificaciones/anuncios-activos', async (req, res) => {
     snapshot.forEach(doc => {
       const data = doc.data();
       if (data.expiraEn && data.expiraEn.toDate() < ahora) return;
-      
-      anuncios.push({ 
-        id: doc.id, 
+
+      anuncios.push({
+        id: doc.id,
         titulo: data.titulo,
         mensaje: data.mensaje,
         creadoEn: data.creadoEn ? data.creadoEn.toDate().toISOString() : null,
@@ -2250,10 +2300,10 @@ app.post('/api/ruta-tranqui/compartir', async (req, res) => {
     const hoy = obtenerDiaActual();
 
     if (perfilData.ultimaFechaCompartido === hoy) {
-      return res.json({ 
-        success: true, 
-        puntosGanados: 0, 
-        mensaje: 'Ya ganaste puntos por compartir hoy. ¡Vuelve mañana!' 
+      return res.json({
+        success: true,
+        puntosGanados: 0,
+        mensaje: 'Ya ganaste puntos por compartir hoy. ¡Vuelve mañana!'
       });
     }
 
@@ -2568,24 +2618,24 @@ app.get('/api/ruta-tranqui/insignias', async (req, res) => {
 });
 
 // =========================================================
-// ⭐ RUTA TRANQUI - REGISTRO CON APKLIS (Opción D)
+// ⭐ RUTA TRANQUI - REGISTRO CON APKLIS
 // =========================================================
 app.post('/api/ruta-tranqui/registrar-con-apklis', async (req, res) => {
   try {
     const { apklisUsername } = req.body;
 
     if (!apklisUsername || typeof apklisUsername !== 'string') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Se requiere apklisUsername válido' 
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere apklisUsername válido'
       });
     }
 
     const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
     if (!usernameRegex.test(apklisUsername)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Username de Apklis inválido' 
+      return res.status(400).json({
+        success: false,
+        message: 'Username de Apklis inválido'
       });
     }
 
@@ -2606,7 +2656,7 @@ app.post('/api/ruta-tranqui/registrar-con-apklis', async (req, res) => {
 
     const BONUS_BIENVENIDA = 50;
     const mesActual = obtenerMesActual();
-    
+
     const perfilInicial = {
       puntosTotales: BONUS_BIENVENIDA,
       puntosMesActual: BONUS_BIENVENIDA,
@@ -2717,18 +2767,19 @@ app.get('/api/health', (req, res) => {
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
-  console.log(`   GET  /api/negocios (con alerta VIP segura)`);
-  console.log(`   POST /api/negocios (con soporte seguro: sin negocios "prueba" automáticos)`);
-  console.log(`   GET  /api/negocios/:id (con alerta VIP segura)`);
-  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (valida licencia activa obligatoria)`);
-  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
+  console.log(`   GET  /api/negocios`);
+  console.log(`   POST /api/negocios`);
+  console.log(`   GET  /api/negocios/:id`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (licencia activa + dueño protegido)`);
+  console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
-  console.log(`   POST /api/licencias/activar (actualiza negocios y licencias correctamente)`);
+  console.log(`   POST /api/licencias/activar ⭐ ID único por usuario (${licencia}_${username})`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
-  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN (reclamar/liberar/extender/cambiar-tipo)`);
+  console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
   console.log(`   DELETE /api/admin/negocios/:id  ⭐ ADMIN borrado total`);
+  console.log(`   POST /api/admin/sincronizar-licencia ⭐ ADMIN (forzar sync tras migración)`);
   console.log(`   GET  /api/admin/stats           ⭐ ADMIN`);
   console.log(`   GET  /api/admin/verificar       ⭐ ADMIN`);
   console.log(`   POST /api/admin/poblar-categorias`);
@@ -2739,19 +2790,19 @@ app.listen(port, () => {
   console.log(`   DELETE /api/negocios/:id/catalogo/:productoId`);
   console.log(`   GET  /api/comentarios/:negocioId`);
   console.log(`   POST /api/comentarios/:negocioId`);
-  console.log(`   DELETE /api/comentarios/:negocioId/:comentarioId ⭐ BORRAR COMENTARIO (Admin/Dueño)`);
+  console.log(`   DELETE /api/comentarios/:negocioId/:comentarioId`);
   console.log(`   GET  /api/reportes-luz`);
   console.log(`   POST /api/reportes-luz`);
-  console.log(`   POST /api/notificaciones/registrar-token ⭐ FCM registro`);
-  console.log(`   POST /api/notificaciones/enviar-todos    ⭐ FCM push global (admin)`);
-  console.log(`   GET  /api/notificaciones/anuncios-activos ⭐ FCM fallback`);
-  console.log(`   GET  /api/mensajes-sistema               ⭐ MENSAJES DEL SISTEMA (Buzón)`);
-  console.log(`   POST /api/ruta-tranqui/compartir         ⭐ GAMIFICACIÓN compartir (+5 pts/día)`);
-  console.log(`   POST /api/ruta-tranqui/checkin        ⭐ GAMIFICACIÓN check-in`);
-  console.log(`   GET  /api/ruta-tranqui/perfil         ⭐ GAMIFICACIÓN perfil`);
-  console.log(`   GET  /api/ruta-tranqui/ranking        ⭐ GAMIFICACIÓN ranking`);
-  console.log(`   GET  /api/ruta-tranqui/insignias      ⭐ GAMIFICACIÓN insignias`);
-  console.log(`   POST /api/ruta-tranqui/registrar-con-apklis ⭐ GAMIFICACIÓN registro Apklis`);
-  console.log(`   POST /api/ruta-tranqui/reset-mensual  ⭐ GAMIFICACIÓN reset (admin)`);
+  console.log(`   POST /api/notificaciones/registrar-token`);
+  console.log(`   POST /api/notificaciones/enviar-todos`);
+  console.log(`   GET  /api/notificaciones/anuncios-activos`);
+  console.log(`   GET  /api/mensajes-sistema`);
+  console.log(`   POST /api/ruta-tranqui/compartir`);
+  console.log(`   POST /api/ruta-tranqui/checkin`);
+  console.log(`   GET  /api/ruta-tranqui/perfil`);
+  console.log(`   GET  /api/ruta-tranqui/ranking`);
+  console.log(`   GET  /api/ruta-tranqui/insignias`);
+  console.log(`   POST /api/ruta-tranqui/registrar-con-apklis`);
+  console.log(`   POST /api/ruta-tranqui/reset-mensual`);
   console.log(`   GET  /api/health`);
 });
