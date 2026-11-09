@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.3-unique-licensing';
+const SERVER_VERSION = '1.2.4-username-as-id';
 
 const express = require('express');
 const cors = require('cors');
@@ -93,38 +93,18 @@ function duracionDiasPlan(plan) {
 }
 
 // =========================================================
-// ⭐ HELPER: Generar ID único de licencia
-// =========================================================
-function generarIdLicencia(licencia, username) {
-  return `${licencia}_${username}`;
-}
-
-// =========================================================
 // ⭐ HELPER: Sincronizar negocios dentro del documento de la licencia
 // =========================================================
 async function sincronizarNegociosEnLicencia(username) {
   try {
-    const ahoraMs = Date.now();
-    const licenciasSnap = await db.collection('licencias')
-      .where('username', '==', username)
-      .get();
+    // ⭐ Ahora el ID del documento es el username
+    const licenciaDocRef = db.collection('licencias').doc(username);
+    const licenciaDoc = await licenciaDocRef.get();
 
-    let licenciaActivaId = null;
-
-    for (const doc of licenciasSnap.docs) {
-      const data = doc.data();
-      if (data.fechaActivacion) {
-        const inicio = data.fechaActivacion.toDate().getTime();
-        const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
-        const fin = inicio + duracion * 86400000;
-        if (fin > ahoraMs) {
-          licenciaActivaId = doc.id;
-          break;
-        }
-      }
+    if (!licenciaDoc.exists) {
+      console.log(`⚠️ No se encontró licencia para @${username}, no se sincronizan negocios.`);
+      return;
     }
-
-    if (!licenciaActivaId) return;
 
     const negociosSnap = await db.collection('negocios')
       .where('propietarioUsername', '==', username)
@@ -136,11 +116,11 @@ async function sincronizarNegociosEnLicencia(username) {
       nombre: doc.data().nombre || 'Sin nombre'
     }));
 
-    await db.collection('licencias').doc(licenciaActivaId).update({
+    await licenciaDocRef.update({
       negociosAsociados: negociosAsociados
     });
 
-    console.log(`✅ Licencia ${licenciaActivaId} sincronizada con ${negociosAsociados.length} negocios.`);
+    console.log(`✅ Licencia de @${username} sincronizada con ${negociosAsociados.length} negocios.`);
   } catch (error) {
     console.error('❌ Error al sincronizar negocios en licencia:', error);
   }
@@ -151,15 +131,16 @@ async function sincronizarNegociosEnLicencia(username) {
 // =========================================================
 async function sincronizarEstadoVip(negocioId, negocioData) {
   if (negocioData.esVip && negocioData.propietarioUsername) {
-    const licenciasSnap = await db.collection('licencias')
-      .where('username', '==', negocioData.propietarioUsername)
+    // ⭐ Ahora buscamos la licencia por ID (que es el username)
+    const licenciaDoc = await db.collection('licencias')
+      .doc(negocioData.propietarioUsername)
       .get();
 
     let tieneLicenciaVigente = false;
     const ahoraMs = Date.now();
 
-    licenciasSnap.forEach((d) => {
-      const licData = d.data();
+    if (licenciaDoc.exists) {
+      const licData = licenciaDoc.data();
       if (licData.fechaActivacion) {
         const inicio = licData.fechaActivacion.toDate().getTime();
         const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
@@ -168,10 +149,10 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
           tieneLicenciaVigente = true;
         }
       }
-    });
+    }
 
     if (!tieneLicenciaVigente) {
-      console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) del usuario @${negocioData.propietarioUsername} aparece como VIP pero NO tiene licencia vigente en la colección 'licencias'. Revisa manualmente.`);
+      console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) del usuario @${negocioData.propietarioUsername} aparece como VIP pero NO tiene licencia vigente. Revisa manualmente.`);
     }
   }
   return negocioData.esVip;
@@ -610,14 +591,13 @@ app.post('/api/negocios', async (req, res) => {
     let tipoPlanUsuario = 'bronce';
 
     if (agregadoPor) {
-      const licenciasSnap = await db.collection('licencias')
-        .where('username', '==', agregadoPor)
-        .get();
-
-      const ahoraMs = Date.now();
-      licenciasSnap.forEach((d) => {
-        const licData = d.data();
+      // ⭐ Ahora buscamos la licencia por ID (que es el username)
+      const licenciaDoc = await db.collection('licencias').doc(agregadoPor).get();
+      
+      if (licenciaDoc.exists) {
+        const licData = licenciaDoc.data();
         if (licData.fechaActivacion) {
+          const ahoraMs = Date.now();
           const inicio = licData.fechaActivacion.toDate().getTime();
           const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
           const fin = inicio + duracion * 86400000;
@@ -626,7 +606,7 @@ app.post('/api/negocios', async (req, res) => {
             tipoPlanUsuario = licData.tipoPlan;
           }
         }
-      });
+      }
     }
 
     const esVipFinal = tieneLicencia;
@@ -814,41 +794,38 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
   }
 });
 
-// ========== LICENCIAS APKLIS: ACTIVAR (CON ID ÚNICO POR USUARIO) ==========
+// ========== LICENCIAS APKLIS: ACTIVAR (VERSIÓN DEFINITIVA: 1 ARCHIVO POR USUARIO) ==========
 
 app.post('/api/licencias/activar', async (req, res) => {
   console.log('📡 POST /api/licencias/activar');
   try {
     const { licencia, tipoPlan, username } = req.body;
 
-    if (!licencia || !tipoPlan) {
-      return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan' });
+    if (!licencia || !tipoPlan || !username) {
+      return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan, username' });
     }
 
-    // ⭐ NUEVO: ID único por usuario (formato: licencia_username)
-    const licenciaId = generarIdLicencia(licencia, username);
-    console.log(`🔑 ID de licencia generado: ${licenciaId}`);
+    // ⭐ EL ID DEL DOCUMENTO SERÁ EL USERNAME. Garantiza 1 solo archivo por usuario.
+    const licenciaId = username;
+    console.log(`🔑 ID de licencia: ${licenciaId} (username)`);
 
     const ahoraMs = Date.now();
     let licenciaVigente = null;
 
-    const snapLicencias = await db
-      .collection('licencias')
-      .where('username', '==', username)
-      .get();
-
-    snapLicencias.forEach((d) => {
-      const data = d.data();
-      if (!data.fechaActivacion) return;
-      const inicio = data.fechaActivacion.toDate().getTime();
-      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
-      const fin = inicio + duracion * 86400000;
-      if (fin > ahoraMs) {
-        if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
-          licenciaVigente = { id: d.id, ...data };
+    // Verificar si ya tiene una licencia vigente para evitar downgrades
+    const docLicenciaActual = await db.collection('licencias').doc(licenciaId).get();
+    
+    if (docLicenciaActual.exists) {
+      const data = docLicenciaActual.data();
+      if (data.fechaActivacion) {
+        const inicio = data.fechaActivacion.toDate().getTime();
+        const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+        const fin = inicio + duracion * 86400000;
+        if (fin > ahoraMs) {
+          licenciaVigente = { id: data.id, ...data };
         }
       }
-    });
+    }
 
     if (licenciaVigente && rankPlan(tipoPlan) < rankPlan(licenciaVigente.tipoPlan)) {
       console.log(`⛔ Downgrade bloqueado: @${username} tiene ${licenciaVigente.tipoPlan} vigente, intentó ${tipoPlan}`);
@@ -863,25 +840,24 @@ app.post('/api/licencias/activar', async (req, res) => {
     const fechaActivacion = admin.firestore.Timestamp.now();
     const fechaExp = new Date(fechaActivacion.toDate().getTime() + duracion * 86400000);
 
+    const datosLicencia = {
+      tipoPlan,
+      username,
+      licenciaOriginalApklis: licencia, // ⭐ Guardamos el UUID de Apklis solo como referencia
+      fechaActivacion,
+      fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+      duracionDias: duracion,
+    };
+
     if (doc.exists) {
-      await db.collection('licencias').doc(licenciaId).update({
-        tipoPlan: tipoPlan,
-        fechaActivacion: fechaActivacion,
-        duracionDias: duracion,
-      });
-      console.log(`🔄 Licencia actualizada a nuevo plan: ${licenciaId.substring(0, 15)}... (${tipoPlan}, ${duracion} días)`);
+      await db.collection('licencias').doc(licenciaId).update(datosLicencia);
+      console.log(`🔄 Licencia de @${username} ACTUALIZADA a: ${tipoPlan} (${duracion} días)`);
     } else {
-      await db.collection('licencias').doc(licenciaId).set({
-        tipoPlan,
-        username: username || 'desconocido',
-        licenciaOriginal: licencia, // ⭐ Guardamos el UUID original de Apklis para referencia
-        fechaActivacion,
-        fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-        duracionDias: duracion,
-      });
-      console.log(`✅ Licencia activada por primera vez: ${licenciaId.substring(0, 15)}... (${tipoPlan}, ${duracion} días)`);
+      await db.collection('licencias').doc(licenciaId).set(datosLicencia);
+      console.log(`✅ Nueva licencia CREADA para @${username}: ${tipoPlan} (${duracion} días)`);
     }
 
+    // Actualizar todos los negocios de este usuario al nuevo plan
     const negociosRef = db.collection('negocios');
     const negociosSnapshot = await negociosRef
       .where('propietarioUsername', '==', username)
@@ -899,9 +875,10 @@ app.post('/api/licencias/activar', async (req, res) => {
         });
       });
       await batch.commit();
-      console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios del usuario @${username} a plan ${tipoPlan}`);
+      console.log(`✅ Se actualizaron ${negociosSnapshot.size} negocios de @${username} al plan ${tipoPlan}`);
     }
 
+    // Sincronizar el arreglo de negocios dentro de este único documento de licencia
     await sincronizarNegociosEnLicencia(username);
 
     res.json({
@@ -928,37 +905,37 @@ app.get('/api/licencias/vigente', async (req, res) => {
     }
 
     const ahoraMs = Date.now();
-    let licenciaVigente = null;
 
-    const snapLicencias = await db
-      .collection('licencias')
-      .where('username', '==', username)
-      .get();
+    // ⭐ Ahora buscamos directamente por ID (que es el username)
+    const doc = await db.collection('licencias').doc(username).get();
 
-    snapLicencias.forEach((d) => {
-      const data = d.data();
-      if (!data.fechaActivacion) return;
-      const inicio = data.fechaActivacion.toDate().getTime();
-      const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
-      const fin = inicio + duracion * 86400000;
-      if (fin > ahoraMs) {
-        if (!licenciaVigente || rankPlan(data.tipoPlan) > rankPlan(licenciaVigente.tipoPlan)) {
-          licenciaVigente = {
-            id: d.id,
-            licencia: d.id,
-            tipoPlan: data.tipoPlan,
-            fechaActivacion: data.fechaActivacion.toDate().toISOString(),
-            fechaExpiracion: new Date(fin).toISOString(),
-            diasRestantes: Math.ceil((fin - ahoraMs) / 86400000),
-            negociosAsociados: data.negociosAsociados || [],
-          };
-        }
-      }
-    });
-
-    if (!licenciaVigente) {
+    if (!doc.exists) {
       return res.json({ success: true, vigente: false, data: null });
     }
+
+    const data = doc.data();
+    
+    if (!data.fechaActivacion) {
+      return res.json({ success: true, vigente: false, data: null });
+    }
+
+    const inicio = data.fechaActivacion.toDate().getTime();
+    const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+    const fin = inicio + duracion * 86400000;
+
+    if (fin <= ahoraMs) {
+      return res.json({ success: true, vigente: false, data: null });
+    }
+
+    const licenciaVigente = {
+      id: doc.id,
+      licencia: doc.id,
+      tipoPlan: data.tipoPlan,
+      fechaActivacion: data.fechaActivacion.toDate().toISOString(),
+      fechaExpiracion: new Date(fin).toISOString(),
+      diasRestantes: Math.ceil((fin - ahoraMs) / 86400000),
+      negociosAsociados: data.negociosAsociados || [],
+    };
 
     console.log(`✅ Licencia vigente de @${username}: ${licenciaVigente.tipoPlan} (${licenciaVigente.diasRestantes} días)`);
     res.json({ success: true, vigente: true, data: licenciaVigente });
@@ -1096,11 +1073,11 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     // ⭐ SEGURIDAD 1: Validar que el usuario tenga una licencia activa
     let tieneLicenciaParaReclamar = false;
-    const licenciasSnap = await db.collection('licencias').where('username', '==', username).get();
+    const licenciaDoc = await db.collection('licencias').doc(username).get();
     const ahoraMs = Date.now();
 
-    licenciasSnap.forEach((d) => {
-      const licData = d.data();
+    if (licenciaDoc.exists) {
+      const licData = licenciaDoc.data();
       if (licData.fechaActivacion) {
         const inicio = licData.fechaActivacion.toDate().getTime();
         const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
@@ -1109,7 +1086,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
           tieneLicenciaParaReclamar = true;
         }
       }
-    });
+    }
 
     if (!tieneLicenciaParaReclamar && !esAdmin(username)) {
       return res.status(403).json({
@@ -2773,7 +2750,7 @@ app.listen(port, () => {
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (licencia activa + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS`);
-  console.log(`   POST /api/licencias/activar ⭐ ID único por usuario (licencia_username)`);
+  console.log(`   POST /api/licencias/activar ⭐ ID = username (1 archivo por usuario)`);
   console.log(`   GET  /api/licencias/vigente`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
