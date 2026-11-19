@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.6-smart-trial';
+const SERVER_VERSION = '1.2.7-clean-licenses';
 
 const express = require('express');
 const cors = require('cors');
@@ -93,13 +93,14 @@ function duracionDiasPlan(plan) {
 }
 
 // =========================================================
-// ⭐ HELPER: Validar licencia activa (OPCIÓN C - Reutilizable)
+// ⭐ HELPER: Validar licencia activa
 // =========================================================
 async function validarLicenciaActiva(username) {
   if (!username) return { activa: false, motivo: 'Sin username' };
   if (esAdmin(username)) return { activa: true };
   
   try {
+    // ⭐ Ahora buscamos directamente por el ID del documento (que es el username)
     const licenciaDoc = await db.collection('licencias').doc(username).get();
     
     if (!licenciaDoc.exists) {
@@ -170,18 +171,13 @@ async function sincronizarNegociosEnLicencia(username) {
 }
 
 // =========================================================
-// ⭐ OPCIÓN A: AUTO-LIMPIEZA DE VIP (Ahora devuelve false si expiró)
+// ⭐ OPCIÓN A: AUTO-LIMPIEZA DE VIP (Devuelve false si expiró)
 // =========================================================
 async function sincronizarEstadoVip(negocioId, negocioData) {
-  // Si el negocio no dice ser VIP, confiamos en eso (rápido)
   if (!negocioData.esVip) return false;
-  
-  // Si no tiene propietario, no podemos validar
   if (!negocioData.propietarioUsername) {
     return negocioData.esVip;
   }
-  
-  // Admins siempre son VIP
   if (esAdmin(negocioData.propietarioUsername)) {
     return true;
   }
@@ -206,7 +202,6 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
   }
 
   if (!tieneLicenciaVigente) {
-    // ⭐ OPCIÓN A: Devuelve false para que NO aparezca destacado en el mapa
     console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) de @${negocioData.propietarioUsername} NO tiene licencia vigente. Ocultando estado VIP.`);
     return false;
   }
@@ -599,7 +594,7 @@ app.post('/api/negocios', async (req, res) => {
       categoriaPrincipal,
       categoriasSecundarias,
       agregadoPor,
-      tipoVip: tipoVipSolicitado, // ⭐ NUEVO: Leemos si se solicita 'prueba'
+      tipoVip: tipoVipSolicitado,
     } = req.body;
     console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor, tipoVipSolicitado });
 
@@ -643,7 +638,6 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    // ⭐ LÓGICA INTELIGENTE DE LICENCIAS
     let tieneLicenciaActivaReal = false;
     let tipoPlanUsuario = null;
     let esVipFinal = false;
@@ -653,60 +647,57 @@ app.post('/api/negocios', async (req, res) => {
     let duracionDiasFinal = null;
 
     if (agregadoPor) {
-      // 1. Verificar si el usuario tiene un plan PAGADO activo
       const validacionLicencia = await validarLicenciaActiva(agregadoPor);
       
       if (validacionLicencia.activa && validacionLicencia.tipoPlan && validacionLicencia.tipoPlan.toLowerCase() !== 'prueba') {
-        // Tiene plan pagado (Bronce, Plata, Oro)
         tieneLicenciaActivaReal = true;
         tipoPlanUsuario = validacionLicencia.tipoPlan;
         esVipFinal = true;
         tipoVipFinal = tipoPlanUsuario.toLowerCase();
       } else if (tipoVipSolicitado === 'prueba') {
-        // No tiene plan pagado, pero ESTA APP solicitó una prueba.
-        // Verificar si ya tiene una prueba vigente en la colección de licencias
         let tienePruebaVigente = false;
-        const licenciasSnap = await db.collection('licencias').where('username', '==', agregadoPor).get();
         
-        for (const doc of licenciasSnap.docs) {
-          const licData = doc.data();
+        // ⭐ Buscamos la licencia usando el username como ID del documento
+        const licenciaDoc = await db.collection('licencias').doc(agregadoPor).get();
+        if (licenciaDoc.exists) {
+          const licData = licenciaDoc.data();
           if (licData.tipoPlan && licData.tipoPlan.toLowerCase() === 'prueba' && licData.fechaActivacion) {
             const inicio = licData.fechaActivacion.toDate().getTime();
-            const duracion = licData.duracionDias || 1; // 1 día por defecto
+            const duracion = licData.duracionDias || 1;
             const fin = inicio + duracion * 86400000;
             if (fin > Date.now()) {
               tienePruebaVigente = true;
               vipHastaFinal = new Date(fin);
               duracionDiasFinal = duracion;
-              break;
             }
           }
         }
 
         if (!tienePruebaVigente) {
-          // Crear nueva licencia de prueba de 1 día
           const nuevaFechaActivacion = admin.firestore.Timestamp.now();
           const duracionPrueba = 1; // 1 día
           const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
           
-          await db.collection('licencias').add({
+          // ⭐ CAMBIO CLAVE: Usamos .doc(username).set() con merge: true
+          // Esto crea el documento si no existe, o lo actualiza si ya existe, 
+          // evitando documentos huérfanos de "Prueba" cuando el usuario compre un plan.
+          await db.collection('licencias').doc(agregadoPor).set({
             username: agregadoPor,
             tipoPlan: 'Prueba',
             fechaActivacion: nuevaFechaActivacion,
             duracionDias: duracionPrueba,
             fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
-          });
+          }, { merge: true });
           
           vipHastaFinal = fechaExpPrueba;
           duracionDiasFinal = duracionPrueba;
-          console.log(`✅ Licencia de PRUEBA (1 día) creada para @${agregadoPor}`);
+          console.log(`✅ Licencia de PRUEBA (1 día) creada/actualizada para @${agregadoPor}`);
         }
 
         esVipFinal = true;
         tipoVipFinal = 'prueba';
         esNegocioPruebaFinal = true;
       } else {
-        // Flujo de la app principal (sin tipoVipSolicitado o sin licencia): negocio normal, no VIP
         esVipFinal = false;
         tipoVipFinal = null;
         esNegocioPruebaFinal = false;
@@ -824,7 +815,7 @@ app.get('/api/negocios/:id', async (req, res) => {
   }
 });
 
-// ========== FOTOS DEL NEGOCIO (Cloudinary URLs) ==========
+// ========== FOTOS DEL NEGOCIO ==========
 
 app.put('/api/negocios/:id/fotos', async (req, res) => {
   console.log(`📡 PUT /api/negocios/${req.params.id}/fotos`);
@@ -861,7 +852,6 @@ app.put('/api/negocios/:id/fotos', async (req, res) => {
       return res.status(403).json({ success: false, message: 'No tienes permiso para modificar las fotos de este negocio' });
     }
 
-    // ⭐ OPCIÓN C: Validar licencia activa antes de permitir editar fotos
     if (!esAdminUser) {
       const validacionLicencia = await validarLicenciaActiva(username);
       if (!validacionLicencia.activa) {
@@ -901,6 +891,7 @@ app.post('/api/licencias/activar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan, username' });
     }
 
+    // ⭐ El ID del documento SIEMPRE es el username
     const licenciaId = username;
     console.log(`🔑 ID de licencia: ${licenciaId} (username)`);
 
@@ -951,7 +942,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       console.log(`✅ Nueva licencia CREADA para @${username}: ${tipoPlan} (${duracion} días)`);
     }
 
-    // Actualizar todos los negocios de este usuario al nuevo plan
     const negociosRef = db.collection('negocios');
     const negociosSnapshot = await negociosRef
       .where('propietarioUsername', '==', username)
@@ -998,6 +988,7 @@ app.get('/api/licencias/vigente', async (req, res) => {
     }
 
     const ahoraMs = Date.now();
+    // ⭐ Buscamos directamente por el ID del documento (username)
     const doc = await db.collection('licencias').doc(username).get();
 
     if (!doc.exists) {
@@ -1273,7 +1264,6 @@ app.put('/api/negocios/:id/vip', async (req, res) => {
       return res.status(403).json({ success: false, message: 'No tienes permiso para editar este negocio' });
     }
 
-    // ⭐ OPCIÓN C: Validar licencia activa antes de permitir edición VIP
     if (!esAdmin(username)) {
       const validacionLicencia = await validarLicenciaActiva(username);
       if (!validacionLicencia.activa) {
@@ -1748,7 +1738,6 @@ app.post('/api/negocios/:negocioId/catalogo', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Sin permisos para agregar productos' });
     }
 
-    // ⭐ OPCIÓN C: Validar licencia activa antes de permitir agregar productos
     if (!esAdminUser) {
       const validacionLicencia = await validarLicenciaActiva(propietarioUsername);
       if (!validacionLicencia.activa) {
@@ -1827,7 +1816,6 @@ app.put('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Sin permisos para editar productos' });
     }
 
-    // ⭐ OPCIÓN C: Validar licencia activa antes de permitir editar productos
     if (!esAdminUser) {
       const validacionLicencia = await validarLicenciaActiva(propietarioUsername);
       if (!validacionLicencia.activa) {
@@ -1894,7 +1882,6 @@ app.delete('/api/negocios/:negocioId/catalogo/:productoId', async (req, res) => 
       return res.status(403).json({ success: false, message: 'Sin permisos para eliminar productos' });
     }
 
-    // ⭐ OPCIÓN C: Validar licencia activa antes de permitir eliminar productos
     if (!esAdminUser) {
       const validacionLicencia = await validarLicenciaActiva(propietarioUsername);
       if (!validacionLicencia.activa) {
@@ -2836,7 +2823,7 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con defensa VIP dinámica)`);
-  console.log(`   POST /api/negocios (con lógica inteligente de prueba de 1 día)`);
+  console.log(`   POST /api/negocios (con lógica inteligente de prueba de 1 día y licencias limpias)`);
   console.log(`   GET  /api/negocios/:id`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (licencia activa + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
