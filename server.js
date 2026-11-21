@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.7-clean-licenses';
+const SERVER_VERSION = '1.2.8-claim-trial';
 
 const express = require('express');
 const cors = require('cors');
@@ -679,8 +679,6 @@ app.post('/api/negocios', async (req, res) => {
           const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
           
           // ⭐ CAMBIO CLAVE: Usamos .doc(username).set() con merge: true
-          // Esto crea el documento si no existe, o lo actualiza si ya existe, 
-          // evitando documentos huérfanos de "Prueba" cuando el usuario compre un plan.
           await db.collection('licencias').doc(agregadoPor).set({
             username: agregadoPor,
             tipoPlan: 'Prueba',
@@ -1153,12 +1151,22 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
+    // ⭐ CAMBIO CLAVE: Si no tiene licencia activa, le creamos una de prueba de 1 día automáticamente
     const validacionLicencia = await validarLicenciaActiva(username);
     if (!validacionLicencia.activa && !esAdmin(username)) {
-      return res.status(403).json({
-        success: false,
-        message: `No tienes una licencia VIP activa. ${validacionLicencia.motivo}. Adquiere un plan para reclamar negocios.`
-      });
+      const nuevaFechaActivacion = admin.firestore.Timestamp.now();
+      const duracionPrueba = 1; // 1 día
+      const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
+      
+      await db.collection('licencias').doc(username).set({
+        username: username,
+        tipoPlan: 'Prueba',
+        fechaActivacion: nuevaFechaActivacion,
+        duracionDias: duracionPrueba,
+        fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      
+      console.log(`✅ Licencia de PRUEBA (1 día) creada automáticamente al reclamar para @${username}`);
     }
 
     if (negocioData.propietarioUsername &&
@@ -2825,7 +2833,7 @@ app.listen(port, () => {
   console.log(`   GET  /api/negocios (con defensa VIP dinámica)`);
   console.log(`   POST /api/negocios (con lógica inteligente de prueba de 1 día y licencias limpias)`);
   console.log(`   GET  /api/negocios/:id`);
-  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (licencia activa + dueño protegido)`);
+  console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (crea licencia de prueba si no tiene, + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró)`);
   console.log(`   POST /api/licencias/activar ⭐ ID = username (1 archivo por usuario)`);
