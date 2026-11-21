@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.8-claim-trial';
+const SERVER_VERSION = '1.2.10-owner-fix';
 
 const express = require('express');
 const cors = require('cors');
@@ -100,7 +100,6 @@ async function validarLicenciaActiva(username) {
   if (esAdmin(username)) return { activa: true };
   
   try {
-    // ⭐ Ahora buscamos directamente por el ID del documento (que es el username)
     const licenciaDoc = await db.collection('licencias').doc(username).get();
     
     if (!licenciaDoc.exists) {
@@ -114,7 +113,8 @@ async function validarLicenciaActiva(username) {
     
     const ahoraMs = Date.now();
     const inicio = licData.fechaActivacion.toDate().getTime();
-    const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
+    // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
+    const duracion = licData.duracionDias ?? duracionDiasPlan(licData.tipoPlan);
     const fin = inicio + duracion * 86400000;
     
     if (fin <= ahoraMs) {
@@ -193,7 +193,8 @@ async function sincronizarEstadoVip(negocioId, negocioData) {
     const licData = licenciaDoc.data();
     if (licData.fechaActivacion) {
       const inicio = licData.fechaActivacion.toDate().getTime();
-      const duracion = licData.duracionDias || duracionDiasPlan(licData.tipoPlan);
+      // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
+      const duracion = licData.duracionDias ?? duracionDiasPlan(licData.tipoPlan);
       const fin = inicio + duracion * 86400000;
       if (fin > ahoraMs) {
         tieneLicenciaVigente = true;
@@ -657,13 +658,13 @@ app.post('/api/negocios', async (req, res) => {
       } else if (tipoVipSolicitado === 'prueba') {
         let tienePruebaVigente = false;
         
-        // ⭐ Buscamos la licencia usando el username como ID del documento
         const licenciaDoc = await db.collection('licencias').doc(agregadoPor).get();
         if (licenciaDoc.exists) {
           const licData = licenciaDoc.data();
           if (licData.tipoPlan && licData.tipoPlan.toLowerCase() === 'prueba' && licData.fechaActivacion) {
             const inicio = licData.fechaActivacion.toDate().getTime();
-            const duracion = licData.duracionDias || 1;
+            // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
+            const duracion = licData.duracionDias ?? 1;
             const fin = inicio + duracion * 86400000;
             if (fin > Date.now()) {
               tienePruebaVigente = true;
@@ -678,7 +679,6 @@ app.post('/api/negocios', async (req, res) => {
           const duracionPrueba = 1; // 1 día
           const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
           
-          // ⭐ CAMBIO CLAVE: Usamos .doc(username).set() con merge: true
           await db.collection('licencias').doc(agregadoPor).set({
             username: agregadoPor,
             tipoPlan: 'Prueba',
@@ -713,7 +713,8 @@ app.post('/api/negocios', async (req, res) => {
       categoriasSecundarias: categoriasSecundarias || [],
       esVip: esVipFinal,
       tipoVip: tipoVipFinal,
-      propietarioUsername: agregadoPor || 'desconocido',
+      // ⭐ CAMBIO: Solo asignar propietarioUsername si es VIP o prueba
+      propietarioUsername: esVipFinal ? (agregadoPor || 'desconocido') : null,
       esNegocioPrueba: esNegocioPruebaFinal,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
       vipHasta: vipHastaFinal ? admin.firestore.Timestamp.fromDate(vipHastaFinal) : null,
@@ -765,7 +766,10 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    if (tieneLicenciaActivaReal && agregadoPor) {
+    // ⭐ CAMBIO CLAVE: Sincronizar negocios en la licencia inmediatamente, 
+    // para que el campo 'negociosAsociados' se inicialice o actualice, 
+    // incluso si es una licencia de prueba recién creada.
+    if (agregadoPor) {
       await sincronizarNegociosEnLicencia(agregadoPor);
     }
 
@@ -889,7 +893,6 @@ app.post('/api/licencias/activar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Faltan campos: licencia, tipoPlan, username' });
     }
 
-    // ⭐ El ID del documento SIEMPRE es el username
     const licenciaId = username;
     console.log(`🔑 ID de licencia: ${licenciaId} (username)`);
 
@@ -986,7 +989,6 @@ app.get('/api/licencias/vigente', async (req, res) => {
     }
 
     const ahoraMs = Date.now();
-    // ⭐ Buscamos directamente por el ID del documento (username)
     const doc = await db.collection('licencias').doc(username).get();
 
     if (!doc.exists) {
@@ -1000,7 +1002,8 @@ app.get('/api/licencias/vigente', async (req, res) => {
     }
 
     const inicio = data.fechaActivacion.toDate().getTime();
-    const duracion = data.duracionDias || duracionDiasPlan(data.tipoPlan);
+    // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
+    const duracion = data.duracionDias ?? duracionDiasPlan(data.tipoPlan);
     const fin = inicio + duracion * 86400000;
 
     if (fin <= ahoraMs) {
@@ -1151,7 +1154,6 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
 
     const negocioData = negocioDoc.data();
 
-    // ⭐ CAMBIO CLAVE: Si no tiene licencia activa, le creamos una de prueba de 1 día automáticamente
     const validacionLicencia = await validarLicenciaActiva(username);
     if (!validacionLicencia.activa && !esAdmin(username)) {
       const nuevaFechaActivacion = admin.firestore.Timestamp.now();
@@ -2831,7 +2833,7 @@ app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
   console.log(`   GET  /api/negocios (con defensa VIP dinámica)`);
-  console.log(`   POST /api/negocios (con lógica inteligente de prueba de 1 día y licencias limpias)`);
+  console.log(`   POST /api/negocios (propietarioUsername solo en VIP/prueba + licencias limpias)`);
   console.log(`   GET  /api/negocios/:id`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (crea licencia de prueba si no tiene, + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
