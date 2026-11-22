@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.10-owner-fix';
+const SERVER_VERSION = '1.2.11-vincular-checkbox';
 
 const express = require('express');
 const cors = require('cors');
@@ -596,8 +596,9 @@ app.post('/api/negocios', async (req, res) => {
       categoriasSecundarias,
       agregadoPor,
       tipoVip: tipoVipSolicitado,
+      vincularAutomaticamente = false, // ⭐ NUEVO: Leer el parámetro del checkbox
     } = req.body;
-    console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor, tipoVipSolicitado });
+    console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor, tipoVipSolicitado, vincularAutomaticamente });
 
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ success: false, message: 'El nombre es obligatorio' });
@@ -650,11 +651,16 @@ app.post('/api/negocios', async (req, res) => {
     if (agregadoPor) {
       const validacionLicencia = await validarLicenciaActiva(agregadoPor);
       
-      if (validacionLicencia.activa && validacionLicencia.tipoPlan && validacionLicencia.tipoPlan.toLowerCase() !== 'prueba') {
+      // ⭐ MODIFICADO: Solo vincular si vincularAutomaticamente es true
+      if (vincularAutomaticamente && 
+          validacionLicencia.activa && 
+          validacionLicencia.tipoPlan && 
+          validacionLicencia.tipoPlan.toLowerCase() !== 'prueba') {
         tieneLicenciaActivaReal = true;
         tipoPlanUsuario = validacionLicencia.tipoPlan;
         esVipFinal = true;
         tipoVipFinal = tipoPlanUsuario.toLowerCase();
+        console.log(`✅ Vinculando negocio al plan ${tipoPlanUsuario} de @${agregadoPor}`);
       } else if (tipoVipSolicitado === 'prueba') {
         let tienePruebaVigente = false;
         
@@ -699,6 +705,7 @@ app.post('/api/negocios', async (req, res) => {
         esVipFinal = false;
         tipoVipFinal = null;
         esNegocioPruebaFinal = false;
+        console.log(`ℹ️ Negocio público creado por @${agregadoPor} (sin vinculación al plan)`);
       }
     }
 
@@ -766,10 +773,8 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    // ⭐ CAMBIO CLAVE: Sincronizar negocios en la licencia inmediatamente, 
-    // para que el campo 'negociosAsociados' se inicialice o actualice, 
-    // incluso si es una licencia de prueba recién creada.
-    if (agregadoPor) {
+    // ⭐ MODIFICADO: Solo sincronizar si el negocio se vinculó al plan (es VIP o Prueba)
+    if (agregadoPor && esVipFinal) {
       await sincronizarNegociosEnLicencia(agregadoPor);
     }
 
