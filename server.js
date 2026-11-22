@@ -67,7 +67,7 @@ const CATEGORIAS_VALIDAS = [
 // =========================================================
 // USUARIOS ADMIN
 // =========================================================
-const ADMIN_USERNAMES = ['noblesse'];
+const ADMIN_USERNAMES = ['noble'];
 
 function esAdmin(username) {
   return ADMIN_USERNAMES.includes(username);
