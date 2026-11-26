@@ -1,7 +1,7 @@
 // =========================================================
 // ⭐ VERSIÓN DEL SERVIDOR
 // =========================================================
-const SERVER_VERSION = '1.2.11-vincular-checkbox';
+const SERVER_VERSION = '1.2.12-vip-hasta-optimizado';
 
 const express = require('express');
 const cors = require('cors');
@@ -93,7 +93,7 @@ function duracionDiasPlan(plan) {
 }
 
 // =========================================================
-// ⭐ HELPER: Validar licencia activa
+// ⭐ HELPER: Validar licencia activa (ACTUALIZADO con fechaExpiracion)
 // =========================================================
 async function validarLicenciaActiva(username) {
   if (!username) return { activa: false, motivo: 'Sin username' };
@@ -113,7 +113,6 @@ async function validarLicenciaActiva(username) {
     
     const ahoraMs = Date.now();
     const inicio = licData.fechaActivacion.toDate().getTime();
-    // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
     const duracion = licData.duracionDias ?? duracionDiasPlan(licData.tipoPlan);
     const fin = inicio + duracion * 86400000;
     
@@ -129,6 +128,7 @@ async function validarLicenciaActiva(username) {
     return { 
       activa: true, 
       tipoPlan: licData.tipoPlan,
+      fechaExpiracion: new Date(fin).toISOString(), // ⭐ NUEVO: Para usar en vinculación automática
       diasRestantes: Math.ceil((fin - ahoraMs) / 86400000)
     };
   } catch (error) {
@@ -171,43 +171,27 @@ async function sincronizarNegociosEnLicencia(username) {
 }
 
 // =========================================================
-// ⭐ OPCIÓN A: AUTO-LIMPIEZA DE VIP (Devuelve false si expiró)
+// ⭐ OPCIÓN B: AUTO-LIMPIEZA DE VIP (OPTIMIZADA: Sin lecturas N+1)
 // =========================================================
 async function sincronizarEstadoVip(negocioId, negocioData) {
   if (!negocioData.esVip) return false;
-  if (!negocioData.propietarioUsername) {
-    return negocioData.esVip;
-  }
-  if (esAdmin(negocioData.propietarioUsername)) {
-    return true;
-  }
+  if (!negocioData.propietarioUsername) return false;
+  if (esAdmin(negocioData.propietarioUsername)) return true;
 
-  const licenciaDoc = await db.collection('licencias')
-    .doc(negocioData.propietarioUsername)
-    .get();
-
-  let tieneLicenciaVigente = false;
-  const ahoraMs = Date.now();
-
-  if (licenciaDoc.exists) {
-    const licData = licenciaDoc.data();
-    if (licData.fechaActivacion) {
-      const inicio = licData.fechaActivacion.toDate().getTime();
-      // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
-      const duracion = licData.duracionDias ?? duracionDiasPlan(licData.tipoPlan);
-      const fin = inicio + duracion * 86400000;
-      if (fin > ahoraMs) {
-        tieneLicenciaVigente = true;
-      }
+  // ⭐ OPTIMIZACIÓN: Leemos directamente vipHasta del documento del negocio
+  if (negocioData.vipHasta) {
+    const fechaExpiracion = negocioData.vipHasta.toDate().getTime();
+    const ahoraMs = Date.now();
+    
+    if (fechaExpiracion > ahoraMs) {
+      return true; // Aún es vigente
+    } else {
+      console.warn(`⚠️ [ALERTA VIP] Negocio "${negocioData.nombre}" (${negocioId}) expiró. Ocultando estado VIP.`);
+      return false; // Expirado
     }
   }
-
-  if (!tieneLicenciaVigente) {
-    console.warn(`⚠️ [ALERTA VIP] El negocio "${negocioData.nombre}" (${negocioId}) de @${negocioData.propietarioUsername} NO tiene licencia vigente. Ocultando estado VIP.`);
-    return false;
-  }
   
-  return true;
+  return false;
 }
 
 // =========================================================
@@ -596,7 +580,7 @@ app.post('/api/negocios', async (req, res) => {
       categoriasSecundarias,
       agregadoPor,
       tipoVip: tipoVipSolicitado,
-      vincularAutomaticamente = false, // ⭐ NUEVO: Leer el parámetro del checkbox
+      vincularAutomaticamente = false,
     } = req.body;
     console.log('📝 Datos recibidos:', { nombre, provincia, municipio, categoriaPrincipal, agregadoPor, tipoVipSolicitado, vincularAutomaticamente });
 
@@ -651,7 +635,7 @@ app.post('/api/negocios', async (req, res) => {
     if (agregadoPor) {
       const validacionLicencia = await validarLicenciaActiva(agregadoPor);
       
-      // ⭐ MODIFICADO: Solo vincular si vincularAutomaticamente es true
+      // ⭐ CORREGIDO: Ahora sí asigna vipHastaFinal correctamente
       if (vincularAutomaticamente && 
           validacionLicencia.activa && 
           validacionLicencia.tipoPlan && 
@@ -660,47 +644,62 @@ app.post('/api/negocios', async (req, res) => {
         tipoPlanUsuario = validacionLicencia.tipoPlan;
         esVipFinal = true;
         tipoVipFinal = tipoPlanUsuario.toLowerCase();
-        console.log(`✅ Vinculando negocio al plan ${tipoPlanUsuario} de @${agregadoPor}`);
-      } else if (tipoVipSolicitado === 'prueba') {
-        let tienePruebaVigente = false;
+        vipHastaFinal = new Date(validacionLicencia.fechaExpiracion); // ⭐ AQUÍ ESTABA EL BUG
+        console.log(`✅ Vinculando negocio al plan ${tipoPlanUsuario} de @${agregadoPor} hasta ${vipHastaFinal}`);
         
+      } else if (tipoVipSolicitado === 'prueba') {
+        // ⭐ CORREGIDO: Bloqueo de prueba infinita
         const licenciaDoc = await db.collection('licencias').doc(agregadoPor).get();
+        let puedeObtenerPrueba = false;
+        let vipHastaPruebaLocal = null;
+        let duracionPruebaLocal = 1;
+
         if (licenciaDoc.exists) {
           const licData = licenciaDoc.data();
-          if (licData.tipoPlan && licData.tipoPlan.toLowerCase() === 'prueba' && licData.fechaActivacion) {
+          if (licData.tipoPlan && licData.tipoPlan.toLowerCase() === 'prueba') {
             const inicio = licData.fechaActivacion.toDate().getTime();
-            // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
             const duracion = licData.duracionDias ?? 1;
             const fin = inicio + duracion * 86400000;
-            if (fin > Date.now()) {
-              tienePruebaVigente = true;
-              vipHastaFinal = new Date(fin);
-              duracionDiasFinal = duracion;
-            }
-          }
-        }
 
-        if (!tienePruebaVigente) {
+            if (fin > Date.now()) {
+              puedeObtenerPrueba = true;
+              vipHastaPruebaLocal = new Date(fin);
+            } else {
+              console.log(`⛔ @${agregadoPor} intentó extender su prueba creando un negocio. Bloqueado.`);
+              return res.status(403).json({
+                success: false,
+                message: 'Tu periodo de prueba ha terminado. Por favor, adquiere un plan para seguir agregando negocios.'
+              });
+            }
+          } else {
+            return res.status(403).json({
+              success: false,
+              message: 'Tu licencia anterior ha expirado o es de un plan superior. Debes renovar tu plan.'
+            });
+          }
+        } else {
+          puedeObtenerPrueba = true;
           const nuevaFechaActivacion = admin.firestore.Timestamp.now();
-          const duracionPrueba = 1; // 1 día
-          const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
+          vipHastaPruebaLocal = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPruebaLocal * 86400000);
           
           await db.collection('licencias').doc(agregadoPor).set({
             username: agregadoPor,
             tipoPlan: 'Prueba',
             fechaActivacion: nuevaFechaActivacion,
-            duracionDias: duracionPrueba,
+            duracionDias: duracionPruebaLocal,
             fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           
-          vipHastaFinal = fechaExpPrueba;
-          duracionDiasFinal = duracionPrueba;
-          console.log(`✅ Licencia de PRUEBA (1 día) creada/actualizada para @${agregadoPor}`);
+          console.log(`✅ Licencia de PRUEBA (1 día) creada por primera vez para @${agregadoPor}`);
         }
 
-        esVipFinal = true;
-        tipoVipFinal = 'prueba';
-        esNegocioPruebaFinal = true;
+        if (puedeObtenerPrueba) {
+          esVipFinal = true;
+          tipoVipFinal = 'prueba';
+          esNegocioPruebaFinal = true;
+          vipHastaFinal = vipHastaPruebaLocal;
+          duracionDiasFinal = duracionPruebaLocal;
+        }
       } else {
         esVipFinal = false;
         tipoVipFinal = null;
@@ -720,7 +719,6 @@ app.post('/api/negocios', async (req, res) => {
       categoriasSecundarias: categoriasSecundarias || [],
       esVip: esVipFinal,
       tipoVip: tipoVipFinal,
-      // ⭐ CAMBIO: Solo asignar propietarioUsername si es VIP o prueba
       propietarioUsername: esVipFinal ? (agregadoPor || 'desconocido') : null,
       esNegocioPrueba: esNegocioPruebaFinal,
       fechaCreacion: admin.firestore.FieldValue.serverTimestamp(),
@@ -773,7 +771,6 @@ app.post('/api/negocios', async (req, res) => {
       }
     }
 
-    // ⭐ MODIFICADO: Solo sincronizar si el negocio se vinculó al plan (es VIP o Prueba)
     if (agregadoPor && esVipFinal) {
       await sincronizarNegociosEnLicencia(agregadoPor);
     }
@@ -1007,7 +1004,6 @@ app.get('/api/licencias/vigente', async (req, res) => {
     }
 
     const inicio = data.fechaActivacion.toDate().getTime();
-    // ⭐ CAMBIO: Usar ?? en lugar de || para respetar el valor 0 si existe
     const duracion = data.duracionDias ?? duracionDiasPlan(data.tipoPlan);
     const fin = inicio + duracion * 86400000;
 
@@ -1162,7 +1158,7 @@ app.put('/api/negocios/:id/reclamar', async (req, res) => {
     const validacionLicencia = await validarLicenciaActiva(username);
     if (!validacionLicencia.activa && !esAdmin(username)) {
       const nuevaFechaActivacion = admin.firestore.Timestamp.now();
-      const duracionPrueba = 1; // 1 día
+      const duracionPrueba = 1;
       const fechaExpPrueba = new Date(nuevaFechaActivacion.toDate().getTime() + duracionPrueba * 86400000);
       
       await db.collection('licencias').doc(username).set({
@@ -2837,14 +2833,14 @@ app.get('/api/health', (req, res) => {
 app.listen(port, () => {
   console.log(`✅ Servidor proxy de Tranqui corriendo en http://localhost:${port} (v${SERVER_VERSION})`);
   console.log(`📡 Endpoints:`);
-  console.log(`   GET  /api/negocios (con defensa VIP dinámica)`);
-  console.log(`   POST /api/negocios (propietarioUsername solo en VIP/prueba + licencias limpias)`);
+  console.log(`   GET  /api/negocios (con defensa VIP dinámica OPTIMIZADA)`);
+  console.log(`   POST /api/negocios (propietarioUsername solo en VIP/prueba + licencias limpias + anti-spam de prueba)`);
   console.log(`   GET  /api/negocios/:id`);
   console.log(`   PUT  /api/negocios/:id/reclamar ⭐ VIP (crea licencia de prueba si no tiene, + dueño protegido)`);
   console.log(`   PUT  /api/negocios/:id/vip      ⭐ VIP edición (bloquea si expiró)`);
   console.log(`   PUT  /api/negocios/:id/fotos    ⭐ FOTOS (bloquea si expiró)`);
   console.log(`   POST /api/licencias/activar ⭐ ID = username (1 archivo por usuario)`);
-  console.log(`   GET  /api/licencias/vigente`);
+  console.log(`   GET  /api/licencias/vigente (ahora devuelve fechaExpiracion)`);
   console.log(`   GET  /api/categorias`);
   console.log(`   PUT  /api/admin/negocios/:id   ⭐ ADMIN edición`);
   console.log(`   PUT  /api/admin/negocios/:id/vip-status ⭐ ADMIN`);
